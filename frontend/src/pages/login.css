@@ -1,0 +1,41 @@
+.login { display: flex; height: 100%; background: #fff; }
+.login-hero {
+  position: relative; overflow: hidden; width: 50%; flex-shrink: 0; color: #fff;
+  background: linear-gradient(160deg, #14397d 0%, #1756a3 55%, #1a68b8 100%);
+  display: flex; flex-direction: column; padding: 54px 64px 40px;
+}
+.hero-rings {
+  position: absolute; inset: 0; pointer-events: none;
+  background:
+    radial-gradient(circle at 10% 12%, transparent 150px, rgba(255,255,255,.06) 151px, transparent 152px),
+    radial-gradient(circle at 70% 115%, transparent 200px, rgba(255,255,255,.07) 201px, transparent 202px),
+    radial-gradient(circle at 70% 115%, transparent 300px, rgba(255,255,255,.06) 301px, transparent 302px),
+    radial-gradient(circle at 70% 115%, transparent 400px, rgba(255,255,255,.05) 401px, transparent 402px);
+}
+.hero-brand { display: flex; align-items: center; gap: 12px; font-weight: 600; font-size: 15px; position: relative; }
+.hero-logo { width: 44px; height: 44px; border-radius: 11px; background: #fff; display: grid; place-items: center; }
+.hero-body { margin-top: auto; margin-bottom: auto; position: relative; max-width: 600px; padding-top: 40px; }
+.hero-chip {
+  display: inline-flex; align-items: center; gap: 7px; height: 26px; padding: 0 10px; border-radius: 6px;
+  background: rgba(90, 169, 53, .22); color: #b6e59c; font-size: 12.5px; font-weight: 600;
+}
+.hero-body h1 { font-size: 40px; line-height: 1.15; letter-spacing: -0.03em; font-weight: 800; margin-top: 22px; }
+.hero-body p { margin-top: 20px; font-size: 15px; line-height: 1.6; color: rgba(255,255,255,.75); max-width: 470px; }
+.hero-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 40px; }
+.hero-stat {
+  border: 1px solid rgba(255,255,255,.18); background: rgba(255,255,255,.08); border-radius: 12px; padding: 16px 18px;
+}
+.hero-stat .l { display: flex; align-items: center; gap: 8px; font-size: 13px; color: rgba(255,255,255,.85); }
+.hero-stat .v { font-size: 23px; font-weight: 700; margin-top: 14px; }
+.hero-stat .s { font-size: 12.5px; color: rgba(255,255,255,.6); margin-top: 8px; }
+.hero-feed {
+  background: #fff; color: var(--text); border-radius: 14px; padding: 18px 18px 8px; margin-top: 16px;
+  box-shadow: 0 20px 40px rgba(6, 22, 60, .3);
+}
+.hero-foot { position: relative; font-size: 12.5px; color: rgba(255,255,255,.6); }
+
+.login-form-wrap { flex: 1; display: grid; place-items: center; padding: 40px; overflow-y: auto; }
+.login-form { width: 100%; max-width: 430px; }
+.login-logo { display: inline-flex; flex-direction: column; align-items: center; gap: 4px; margin-bottom: 36px; }
+.login-form h2 { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; }
+.login-input { height: 46px; }
