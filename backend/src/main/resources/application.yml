@@ -1,0 +1,54 @@
+server:
+  port: ${SERVER_PORT:8090}
+  servlet:
+    encoding:
+      charset: UTF-8
+      force: true
+
+spring:
+  application:
+    name: zener-station-manager
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5434/zener_station}
+    username: ${DB_USER:zener}
+    password: ${DB_PASSWORD:zener}
+  flyway:
+    enabled: true
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    default-property-inclusion: always
+    time-zone: ${APP_TIMEZONE:Africa/Lome}
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
+  mail:
+    host: ${MAIL_HOST:}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USER:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail.smtp.auth: ${MAIL_AUTH:true}
+      mail.smtp.starttls.enable: ${MAIL_STARTTLS:true}
+  task:
+    scheduling:
+      pool:
+        size: 4
+
+app:
+  timezone: ${APP_TIMEZONE:Africa/Lome}
+  jwt:
+    # 32 caractères minimum ; à remplacer en production (variable JWT_SECRET)
+    secret: ${JWT_SECRET:dev-secret-zener-station-manager-change-me-0123456789}
+    ttl-hours: ${JWT_TTL_HOURS:12}
+  cors-origins: ${CORS_ORIGINS:http://localhost:5173,null}
+  upload-dir: ${UPLOAD_DIR:./uploads}
+  mail:
+    from: ${MAIL_FROM:station-manager@zener.tg}
+  # Données de démonstration (stations, cartes, ventes…) reprenant les maquettes
+  demo-data: ${DEMO_DATA:false}
+
+logging:
+  level:
+    tg.zener: INFO

@@ -4,3 +4,9 @@ release/
 *.log
 # fichiers temporaires de Word
 ~$*
+
+# backend
+backend/target/
+uploads/
+backend/uploads/
+.env
