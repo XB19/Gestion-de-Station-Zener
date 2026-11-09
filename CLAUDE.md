@@ -2,7 +2,7 @@
 
 Application de gestion du réseau de stations-service **ZENER** (Togo, aussi Bénin et Burkina), développée par des stagiaires de Kapi Consult. Elle succède à la plateforme LCT/LTStation (`../../LTStation`, même PC) mais c'est un **nouveau projet**, pas un port.
 
-- `frontend/` : application desktop Electron + React 18 + Vite (JSX, pas de TypeScript), faite par un coéquipier. 14 écrans reproduisant `maquettes/`. **Toutes les données sont codées en dur** dans les pages (ou `src/data/`) : rien n'appelle encore l'API.
+- `frontend/` : application desktop Electron + React 18 + Vite (JSX, pas de TypeScript), faite par un coéquipier. 14 écrans reproduisant `maquettes/`, **branchés sur l'API** depuis le 9 novembre 2026 (plus aucune donnée codée en dur, mise à jour en direct par le flux SSE). Couche d'accès : `src/api/` (`client.js`, `session.jsx`, `live.jsx`, `hooks.js`), formats dans `src/lib/`.
 - `backend/` : API Spring Boot 3.4 / Java 17 / PostgreSQL. **Tous les modules sont écrits, lancés et vérifiés** sur les données de démonstration (voir « État et suites »). Non commitée.
 - `App de Gestion de station Zener.docx` : notes de cahier des charges du coéquipier.
 - Interface et messages **en français** ; code (identifiants) en anglais, commentaires en français.
@@ -10,7 +10,8 @@ Application de gestion du réseau de stations-service **ZENER** (Togo, aussi Bé
 ## Règles de travail
 
 - Ne jamais pousser sur GitHub (`origin` = github.com/XB19/Gestion-de-Station-Zener) sans demande explicite. Ne commiter que sur demande, sur une branche (pas `main`).
-- Le frontend appartient au coéquipier : ne pas le modifier sans demande ; lister les manques à la place.
+- Le frontend appartient au coéquipier (design, maquettes) : ne pas le modifier sans demande ; lister les manques à la place. Le branchement sur l'API a été fait à la demande de l'utilisateur.
+- **Données de démonstration et simulateur actifs par défaut** (`DEMO_DATA` vaut `true`) pour que toute personne qui clone le dépôt ait un réseau vivant. À retirer quand les vrais tests commenceront : paquet `backend/.../demo`, défaut de `app.demo-data` dans `application.yml`, service `api` / `DEMO_DATA` de `docker-compose.yml`, `.env.example`, badges de comptes de démonstration de `Login.jsx` et section « Données de démonstration » des README.
 - Applications mobiles (NFC, client final) : hors périmètre pour l'instant, sauf le **suivi GPS** (voir Zen Mobility) qui ne demande qu'une API.
 
 ## Décisions fonctionnelles (réunions avec le responsable)
@@ -85,36 +86,37 @@ Les 11 points de l'ancienne liste « Reste à faire » sont faits (9 novembre 20
 - `./mvnw test` : 33 tests unitaires (`ModeScheduleTest`, `ThresholdServiceTest`, `CardServiceTest`, `BatchImportTest`), tous verts.
 - Serveur lancé sur une base vide avec `DEMO_DATA=true` (création en ~55 s, ~16 000 ventes), puis 136 vérifications d'API par un script Python (non versionné) : lecture de tous les écrans ; recharge au-dessus du palier → Comptable → DAF → carte créditée ; activation refusée à l'émetteur ; vente PDV hors ligne synchronisée deux fois sans doublon ; refus carte (hors horaires, produit, bloquée, solde / plafond) ; postes et reste à remettre ; employés, photo, rôles ; rapports ; PC station (autonome : carte + PIN, idempotence, distributeur de gaz) ; Zen Mobility jusqu'au débit de la carte.
 - Tâches planifiées observées en direct : bascule automatique par plage horaire, station hors ligne puis de nouveau en ligne.
+- Frontend branché : `npm run build` sans erreur ; les 14 écrans parcourus dans le navigateur avec les données réelles, sans erreur console ; parcours testé à la main : connexion DAF → approbation d'une recharge → carte créditée, flux en direct mis à jour.
 
 À faire ensuite :
-1. Brancher le frontend sur l'API (avec le coéquipier) ; écrans manquants listés ci-dessous.
+1. Écrans manquants listés ci-dessous (Zen Mobility surtout).
 2. Tests d'intégration automatisés (base PostgreSQL dédiée ou Testcontainers) reprenant les parcours vérifiés à la main.
 3. Envoi réel des emails (serveur SMTP à obtenir) ; jours fériés musulmans à saisir chaque année.
 4. Avant le premier déploiement : figer `V1` / `V2` (ensuite, uniquement des `V3__…`), `JWT_SECRET` de production, sauvegardes PostgreSQL.
 
 ## Manques du frontend (à signaler au coéquipier, ne pas corriger sans demande)
 
-- Aucun branchement à l'API (connexion, données, actions) ; pas de stockage du jeton.
-- Pas d'écran **Zen Mobility** (commandes ≥ 1 000 L, suivi en direct) ni de **carte en direct** des livreurs / stations mobiles.
-- Pas de **file d'activation des cartes** (cartes « à activer », activation par une autre personne).
-- Pas d'écran de **clôture de poste du pompiste** (historique, reste à remettre).
-- Rien pour le **distributeur de gaz** en libre-service.
-- Permissions de carte : pas de case « Accessoires » (le backend la gère).
-- Pas d'écran « Paramètres » (palier de validation, horaires des emails, jours fériés) alors que le lien existe dans la barre latérale.
+Faits lors du branchement : connexion et jeton (« Rester connecté » = localStorage), menus et boutons selon les droits, file des cartes « à activer » (onglet de l'écran Cartes), case « Accessoires » des permissions, clôture des postes par le chef de poste / gérant (Rapports › Rapports de poste), paliers de validation et planification du résumé email (dans Validations et Rapports).
+
+Restent à faire :
+- Écran **Zen Mobility** (commandes ≥ 1 000 L, affectation, suivi) et **carte en direct** des livreurs / stations mobiles (`/api/mobility/*`, `/api/tracking/live`, événements `location`).
+- Écran du **pompiste** pour son propre poste (`/api/shifts/me` : ventes, reste à remettre, pause) et saisie des ventes à la pompe en mode conventionnel (`/api/sales/fuel`).
+- Écran **Paramètres** complet (lien de la barre latérale inactif) : seuils d'alerte, délais en ligne / hors ligne, jours fériés, file des emails.
+- Import de stations (bouton retiré), modification des pistolets et cuves (seul l'état d'un pistolet se change depuis la fiche station).
 
 ## Données de démonstration
 
 `DEMO_DATA=true` sur une base **vide** (sinon rien n'est fait ; le paramètre `demo.seeded` marque une création complète, un avertissement est journalisé sinon). Pour régénérer : recréer la base.
 - Mot de passe de tous les comptes : `zener-station`. Admin `ama.kpodar@zener.tg`, gérant d'Agoè `kossi.amegah@zener.tg`, chef de poste `yao.agbeko@zener.tg`, pompiste `komlan.tetteh@zener.tg`, comptables `abla.gbeasor@zener.tg` / `kafui.ekoue@zener.tg`, DAF `mawuli.kpodar@zener.tg`, agents PDV `essi.lawson@zener.tg`, `delali.agbo@zener.tg`…, livreurs `edem.akakpo@zener.tg`, `koffi.dossou@zener.tg`.
 - PIN de toutes les cartes : `1234`. Clé du PC station : `X-Station-Code: ST-001` + `X-Station-Key: demo-st-001` (jusqu'à ST-011).
-- `DemoSimulator` (toutes les 30 s) : signaux de vie des stations de `demo.online_codes`, Kpalimé instable (`demo.unstable_codes`), quelques ventes, le livreur en route avance (`demo.route`). Atakpamé et Dapaong restent hors ligne.
+- `DemoSimulator` : toutes les 6 s (selon l'affluence de l'heure) une opération par les vrais services — vente espèces / mobile money, paiement par carte (y compris autonome avec PIN), boutique et gaz, distributeur de gaz, carte vendue en PDV, recharge, refus de carte, activation par la comptabilité, recharge au-dessus du palier (6 validations en attente au plus) — plus signaux de vie (`demo.online_codes`, Kpalimé instable `demo.unstable_codes`, PDV `demo.pdv_online_codes`) et états des pistolets. Chaque minute : relève des postes avec remise des espèces, livraison des cuves sous 10 %, réassort boutique, recharge des cartes flottes, cartes vierges pour les PDV, tournée Zen Mobility suivante (`demo.route`). Atakpamé et Dapaong restent hors ligne.
 - Repères : Komlan Tetteh est l'employé du mois d'octobre ; Bè Kpota a la cuve de gasoil sous le seuil ; la carte BTP Kara est bloquée ; Adidogomé, Notsè, Sokodé et Kara sont en autonome manuel (`auto_switch = false`).
 
 ## Lancer le backend en local
 
 Prérequis : Java 17, Maven Wrapper (`backend/mvnw`, les dépendances sont déjà en cache dans `~/.m2`). Docker Desktop n'est pas toujours démarré sur ce PC.
 
-Base de test : une instance PostgreSQL 17 privée a été créée avec les binaires installés (`C:\Program Files\PostgreSQL\17\bin`) dans un dossier temporaire de session, port 5434, utilisateur / mot de passe `zener` (elle peut avoir disparu ; `docker compose up -d` donne l'équivalent). Pour en recréer une :
+Base de test : une instance PostgreSQL 17 persistante est dans `~/zener-pg` (port 5434, utilisateur / mot de passe `zener`) ; si le port ne répond pas : `pg_ctl -D ~/zener-pg -o "-p 5434" -l ~/zener-pg/server.log start` (ou `docker compose up -d db`). Pour en recréer une :
 
 ```bash
 PG="/c/Program Files/PostgreSQL/17/bin"; D="$HOME/zener-pg"

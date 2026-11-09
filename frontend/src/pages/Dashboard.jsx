@@ -1,36 +1,18 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Banknote, Droplet, Wifi, ShieldCheck, Download, Plus, Fuel, Clock, ArrowRight, TriangleAlert, Mail } from 'lucide-react';
 import {
-  Banknote, Droplet, Wifi, ShieldCheck, Download, Plus, Fuel, Wallet, CreditCard, ArrowLeftRight, Flame,
-  Clock, ArrowRight, TriangleAlert, Mail,
-} from 'lucide-react';
-import {
-  PageHeader, Card, CardHead, Kpi, Trend, Badge, StatusBadge, Button, Segmented, IcoBox, Progress,
+  PageHeader, Card, CardHead, Kpi, Trend, Badge, StatusBadge, Button, Segmented, IcoBox, Progress, Async, Empty,
 } from '../components/ui.jsx';
-import { AreaChart } from '../components/charts.jsx';
-import { STATIONS } from '../data/stations.js';
+import { AreaChart, niceScale } from '../components/charts.jsx';
+import { useApi, useInterval, useLiveReload } from '../api/hooks.js';
+import { useLiveEvent } from '../api/live.jsx';
+import { useSession } from '../api/session.jsx';
+import { operationIcon } from '../lib/operations.js';
+import { ago, compact, exportCsv, fcfa, money, num, pct, shortName, time, todayLabel } from '../lib/format.js';
 
-// Courbe cumulée (en millions) de 06h à 18h42
-const TODAY = [0.2, 0.8, 1.1, 2.4, 2.8, 3.6, 4.2, 4.4, 5.3, 5.6, 6.6, 7.0, 8.0, 8.4, 9.4, 9.9, 10.6, 11.6, 12.0, 13.0, 13.5, 14.6, 15.8, 16.8, 18.45];
-const YESTERDAY = [0.1, 0.6, 1.1, 2.2, 2.5, 3.2, 3.8, 4.1, 4.9, 5.2, 6.0, 6.4, 7.3, 7.6, 8.6, 9.0, 9.7, 10.6, 11.0, 11.8, 12.2, 13.2, 14.3, 15.2, 16.6];
-
-const FEED = [
-  { icon: Fuel, tone: 'blue', t: 'Vente carburant · 42,5 L', s: 'Kossi A. · Pompe 3 · Agoè', v: '28 900 F', when: 'à l’instant' },
-  { icon: Wallet, tone: 'green', t: 'Recharge carte ···2847', s: 'Essi L. · Siège Lomé', v: '50 000 F', when: 'il y a 1 min' },
-  { icon: ShieldCheck, tone: 'orange', t: 'Validation demandée', s: 'Translom SARL · flotte', v: '2 500 000 F', when: 'il y a 3 min' },
-  { icon: CreditCard, tone: 'navy', t: 'Vente carte VIP', s: 'Afi D. · Foire de Lomé', v: '5 000 F', when: 'il y a 4 min' },
-  { icon: ArrowLeftRight, tone: 'green', t: 'Bascule mode autonome', s: 'Kara Centre · auto', v: '', when: 'il y a 6 min' },
-  { icon: Flame, tone: 'red', t: 'Échange gaz 12 kg', s: 'Yao A. · Bè Kpota', v: '6 500 F', when: 'il y a 7 min' },
-  { icon: Fuel, tone: 'blue', t: 'Vente carburant · 60 L', s: 'Komlan T. · Pompe 1 · Adidogomé', v: '40 500 F', when: 'il y a 9 min' },
-];
-
-const PDV = [
-  { name: 'Siège Lomé', kind: 'Permanent', amount: '1 240 000 F', pct: 72 },
-  { name: 'Foire Internationale de Lomé', kind: 'Temporaire · J-3', amount: '386 000 F', pct: 48 },
-  { name: 'Stand Agro-Plus Togo', kind: 'Temporaire · J-1', amount: '94 000 F', pct: 20, offline: 'Hors ligne · 12 op.' },
-];
-
-const ETAT_TONE = { Normal: 'gray', 'Cuve Gasoil basse': 'orange', 'Lecteur déconnecté': 'red' };
+const PERIODS = { Jour: 'JOUR', Semaine: 'SEMAINE', Mois: 'MOIS' };
+const ETAT_TONE = (etat) => (etat === 'Normal' ? 'gray' : /Lecteur/.test(etat) ? 'red' : 'orange');
 
 export function CuveBars({ levels }) {
   const colors = ['#1b66b8', '#5aa935', '#f29e1f'];
@@ -38,174 +20,264 @@ export function CuveBars({ levels }) {
     <span style={{ display: 'inline-flex', alignItems: 'flex-end', gap: 4, height: 24 }}>
       {levels.map((l, i) => (
         <span key={i} style={{ width: 7, height: 24, background: '#edf1f5', borderRadius: 2, display: 'flex', alignItems: 'flex-end' }}>
-          <span style={{ width: '100%', height: `${l}%`, borderRadius: 2, background: l < 20 ? '#e5484d' : colors[i] }} />
+          <span style={{ width: '100%', height: `${l}%`, borderRadius: 2, background: l < 20 ? '#e5484d' : colors[i % 3] }} />
         </span>
       ))}
     </span>
   );
 }
 
+/** Ligne du flux en direct (entrée du journal). */
+export function FeedItem({ op, flash }) {
+  const [icon, tone] = operationIcon(op);
+  const who = op.actorName && op.actorName !== 'Système' ? shortName(op.actorName) : null;
+  return (
+    <div className={`list-item ${flash ? 'flash' : ''}`} style={{ alignItems: 'flex-start' }}>
+      <IcoBox icon={icon} tone={tone} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="strong" style={{ fontSize: 14 }}>{op.title}</div>
+        <div className="muted" style={{ fontSize: 12.5, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {[who, op.detail, op.place].filter(Boolean).join(' · ')}
+        </div>
+      </div>
+      <div style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+        <div className="strong num" style={{ fontSize: 14 }}>{op.amount ? money(op.amount) : ''}</div>
+        <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>{ago(op.at)}</div>
+      </div>
+    </div>
+  );
+}
+
+/** Flux en direct : opérations du journal, les nouvelles arrivent par le flux temps réel. */
+export function LiveFeed({ initial, limit = 7, stationId }) {
+  const [items, setItems] = useState([]);
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (initial) setItems((cur) => (cur.length ? cur : initial.slice(0, limit).map((o) => ({ ...o, fresh: false }))));
+  }, [initial, limit]);
+  useLiveEvent(['operation'], (_, op) => {
+    if (!op || (stationId && op.stationId !== stationId)) return;
+    setItems((cur) => [{ ...op, fresh: true }, ...cur.filter((x) => x.id !== op.id)].slice(0, limit));
+  });
+  useInterval(() => tick((n) => n + 1), 30_000); // « il y a x min »
+  if (!items.length) return <Empty>Aucune opération pour le moment</Empty>;
+  return items.map((op) => <FeedItem key={op.id} op={op} flash={op.fresh} />);
+}
+
 export default function Dashboard() {
   const navigate = useNavigate();
+  const { user, can } = useSession();
   const [period, setPeriod] = useState('Jour');
-  const rows = STATIONS.filter((s) => ['agoe-assiyeye', 'be-kpota', 'adidogome', 'kara-centre', 'atakpame'].includes(s.id));
+  const dash = useApi(`/dashboard?period=${PERIODS[period]}`);
+  useLiveReload(dash.reload, ['sale', 'operation', 'station'], 4000);
+  useInterval(dash.reload, 60_000);
 
   return (
     <>
       <PageHeader
-        title="Bonjour Ama"
-        subtitle="Lundi 2 novembre 2026 · voici l’activité de votre réseau en direct"
+        title={`Bonjour ${user?.firstName || ''}`}
+        subtitle={`${todayLabel()} · voici l’activité de votre réseau en direct`}
         actions={
           <>
-            <Button icon={Download}>Exporter</Button>
-            <Button variant="primary" icon={Plus} onClick={() => navigate('/stations')}>Nouvelle station</Button>
+            <Button
+              icon={Download}
+              disabled={!dash.data}
+              onClick={() =>
+                exportCsv(`stations-${period.toLowerCase()}.csv`, [
+                  { label: 'Station', value: 'name' }, { label: 'Statut', value: 'statusLabel' }, { label: 'Mode', value: 'modeLabel' },
+                  { label: 'Recette du jour (F)', value: 'revenueToday' }, { label: 'Volume (L)', value: 'volumeToday' },
+                  { label: 'État', value: 'state' },
+                ], dash.data.stationStates)
+              }
+            >
+              Exporter
+            </Button>
+            {can('STATIONS_GERER') && (
+              <Button variant="primary" icon={Plus} onClick={() => navigate('/stations?new=1')}>Nouvelle station</Button>
+            )}
           </>
         }
       />
 
-      <div className="grid g4 mb20">
-        <Kpi icon={Banknote} label="Recette du jour" value="18 452 500" unit="FCFA" foot={<><Trend value="12,4 %" /> vs hier à la même heure</>} />
-        <Kpi icon={Droplet} tone="green" label="Volume distribué" value="27 140" unit="L" foot={<><Trend value="6,1 %" /> Super 61 % · Gasoil 39 %</>} />
-        <Kpi icon={Wifi} tone="navy" label="Stations en ligne" value="38" unit="/ 42" foot={<><Badge tone="red" dot>4 hors ligne</Badge> depuis 10 min</>} />
-        <Kpi icon={ShieldCheck} tone="orange" label="Validations en attente" value="4" foot={<><span className="row" style={{ gap: 5, color: 'var(--orange)', fontWeight: 600 }}><Clock size={14} /> 6,8 M FCFA</span> à approuver</>} />
-      </div>
-
-      <div className="grid mb20" style={{ gridTemplateColumns: 'minmax(0, 1fr) 380px' }}>
-        <Card>
-          <CardHead
-            title="Recette en direct"
-            sub="Toutes stations, mise à jour en continu"
-            right={<Segmented items={['Jour', 'Semaine', 'Mois']} value={period} onChange={setPeriod} />}
-          />
-          <div className="row" style={{ gap: 34, padding: '20px 20px 0', alignItems: 'flex-end' }}>
-            <div>
-              <div className="muted" style={{ fontSize: 12.5 }}>Cumul à 18:42</div>
-              <div className="num" style={{ fontSize: 21, fontWeight: 700, marginTop: 4 }}>
-                18 452 500 <small className="muted" style={{ fontSize: 12.5 }}>FCFA</small>
+      <Async state={dash} minHeight={400}>
+        {(d) => {
+          const fuels = d.volume.byFuel || [];
+          const share = fuels.filter((f) => f.code !== 'PETROLE').map((f) => `${f.name} ${f.sharePct} %`).join(' · ');
+          const offline = d.stations.offline + d.stations.unstable;
+          const curve = d.curves;
+          const current = curve.current.filter((v) => v !== null);
+          const scale = niceScale(Math.max(...curve.previous, ...current, 1));
+          const unitM = scale.max >= 1e6;
+          const yLabels = scale.ticks.map((t) => (unitM ? `${num(t / 1e6, t % 1e6 ? 1 : 0)} M` : `${num(t / 1e3)} k`));
+          const step = curve.labels.length > 12 ? Math.ceil(curve.labels.length / 8) : 1;
+          const xLabels = curve.labels.filter((_, i) => i % step === 0)
+            .map((l) => (curve.unit === 'JOUR' ? l.slice(8, 10) + '/' + l.slice(5, 7) : l));
+          return (
+            <>
+              <div className="grid g4 mb20">
+                <Kpi
+                  icon={Banknote}
+                  label={period === 'Jour' ? 'Recette du jour' : `Recette · ${period.toLowerCase()}`}
+                  value={fcfa(d.revenue.value)}
+                  unit="FCFA"
+                  foot={<><Trend value={pct(d.revenue.changePct)} down={d.revenue.changePct < 0} /> vs {period === 'Jour' ? 'hier à la même heure' : 'période précédente'}</>}
+                />
+                <Kpi
+                  icon={Droplet}
+                  tone="green"
+                  label="Volume distribué"
+                  value={num(d.volume.value)}
+                  unit="L"
+                  foot={<><Trend value={pct(d.volume.changePct)} down={d.volume.changePct < 0} /> {share}</>}
+                />
+                <Kpi
+                  icon={Wifi}
+                  tone="navy"
+                  label="Stations en ligne"
+                  value={d.stations.online}
+                  unit={`/ ${d.stations.total}`}
+                  foot={offline ? <><Badge tone="red" dot>{d.stations.offline} hors ligne</Badge> {d.stations.unstable ? `${d.stations.unstable} instable` : ''}</> : 'Toutes en ligne'}
+                />
+                <Kpi
+                  icon={ShieldCheck}
+                  tone="orange"
+                  label="Validations en attente"
+                  value={d.validations.pending}
+                  foot={<><span className="row" style={{ gap: 5, color: 'var(--orange)', fontWeight: 600 }}><Clock size={14} /> {compact(d.validations.amount)} FCFA</span> à approuver</>}
+                />
               </div>
-            </div>
-            {[['Carburant', '15 980 200'], ['Cartes & recharges', '1 640 000'], ['Gaz & lubrifiants', '832 300']].map(([l, v]) => (
-              <div key={l}>
-                <div className="muted" style={{ fontSize: 12.5 }}>{l}</div>
-                <div className="num strong" style={{ fontSize: 16, marginTop: 6 }}>{v}</div>
-              </div>
-            ))}
-            <div className="row" style={{ marginLeft: 'auto', gap: 16, alignSelf: 'flex-start' }}>
-              <span className="legend"><i style={{ background: '#1b66b8' }} /> Aujourd’hui</span>
-              <span className="legend"><i style={{ background: '#8db4e2' }} /> Hier</span>
-            </div>
-          </div>
-          <div style={{ padding: '14px 12px 20px 4px' }}>
-            <AreaChart
-              today={TODAY}
-              yesterday={YESTERDAY}
-              max={20}
-              height={300}
-              yLabels={['0 M', '5 M', '10 M', '15 M', '20 M']}
-              xLabels={['06h', '08h', '10h', '12h', '14h', '16h', '18h']}
-            />
-          </div>
-        </Card>
 
-        <Card>
-          <CardHead title="Flux en direct" sub="Qui fait quoi, en ce moment" right={<span className="live-pill" style={{ height: 26 }}><span className="pulse" /> Live</span>} />
-          <div style={{ padding: '8px 20px 6px' }}>
-            {FEED.map((f) => (
-              <div key={f.t + f.when} className="list-item" style={{ alignItems: 'flex-start' }}>
-                <IcoBox icon={f.icon} tone={f.tone} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div className="strong" style={{ fontSize: 14 }}>{f.t}</div>
-                  <div className="muted" style={{ fontSize: 12.5, marginTop: 2 }}>{f.s}</div>
-                </div>
-                <div style={{ textAlign: 'right' }}>
-                  <div className="strong num" style={{ fontSize: 14 }}>{f.v}</div>
-                  <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>{f.when}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </Card>
-      </div>
-
-      <div className="grid" style={{ gridTemplateColumns: 'minmax(0, 1fr) 380px', alignItems: 'start' }}>
-        <Card>
-          <CardHead
-            title="État des stations"
-            sub="38 en ligne · 4 hors ligne"
-            right={<Button size="sm" iconRight={ArrowRight} onClick={() => navigate('/stations')}>Voir les 42 stations</Button>}
-          />
-          <table className="table" style={{ marginTop: 14 }}>
-            <thead>
-              <tr>
-                <th>Station</th><th>Statut</th><th>Mode</th><th className="r">Recette du jour</th><th>Cuves</th><th>État</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((s) => (
-                <tr key={s.id} className="tr-click" onClick={() => navigate(`/stations/${s.id}`)}>
-                  <td>
-                    <div className="row" style={{ gap: 12 }}>
-                      <IcoBox icon={Fuel} tone="gray" size={32} />
-                      <div>
-                        <div className="cell-title">{s.short}</div>
-                        <div className="cell-sub">{s.type}</div>
+              <div className="grid mb20" style={{ gridTemplateColumns: 'minmax(0, 1fr) 380px' }}>
+                <Card>
+                  <CardHead
+                    title="Recette en direct"
+                    sub="Toutes stations, mise à jour en continu"
+                    right={<Segmented items={Object.keys(PERIODS)} value={period} onChange={setPeriod} />}
+                  />
+                  <div className="row" style={{ gap: 34, padding: '20px 20px 0', alignItems: 'flex-end' }}>
+                    <div>
+                      <div className="muted" style={{ fontSize: 12.5 }}>Cumul à {time(d.generatedAt)}</div>
+                      <div className="num" style={{ fontSize: 21, fontWeight: 700, marginTop: 4 }}>
+                        {fcfa(d.revenue.value + d.recharges)} <small className="muted" style={{ fontSize: 12.5 }}>FCFA</small>
                       </div>
                     </div>
-                  </td>
-                  <td><StatusBadge status={s.status} /></td>
-                  <td><Badge tone={s.mode === 'Autonome' ? 'navy' : 'blue'}>{s.mode}</Badge></td>
-                  <td className="r num strong">{s.recette || '—'}</td>
-                  <td><CuveBars levels={s.cuves} /></td>
-                  <td>{s.etat && <Badge tone={ETAT_TONE[s.etat]}>{s.etat}</Badge>}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Card>
+                    {d.breakdown.map((b) => (
+                      <div key={b.code}>
+                        <div className="muted" style={{ fontSize: 12.5 }}>{b.label}</div>
+                        <div className="num strong" style={{ fontSize: 16, marginTop: 6 }}>{fcfa(b.amount)}</div>
+                      </div>
+                    ))}
+                    <div className="row" style={{ marginLeft: 'auto', gap: 16, alignSelf: 'flex-start' }}>
+                      <span className="legend"><i style={{ background: '#1b66b8' }} /> {period === 'Jour' ? 'Aujourd’hui' : 'Période'}</span>
+                      <span className="legend"><i style={{ background: '#8db4e2' }} /> {period === 'Jour' ? 'Hier' : 'Précédente'}</span>
+                    </div>
+                  </div>
+                  <div style={{ padding: '14px 12px 20px 4px' }}>
+                    <AreaChart
+                      today={current}
+                      yesterday={curve.previous}
+                      points={curve.labels.length}
+                      max={scale.max}
+                      height={300}
+                      yLabels={yLabels}
+                      xLabels={xLabels}
+                    />
+                  </div>
+                </Card>
 
-        <div className="stack">
-          <Card>
-            <CardHead title="Points de vente ouverts" right={<Badge tone="green">3 ouverts</Badge>} />
-            <div style={{ padding: '6px 20px 14px' }}>
-              {PDV.map((p) => (
-                <div key={p.name} style={{ padding: '14px 0', borderBottom: '1px solid var(--border-2)' }}>
-                  <div className="row between">
-                    <span className="row" style={{ gap: 8 }}>
-                      <span className="strong">{p.name}</span>
-                      {p.offline && <Badge tone="orange">{p.offline}</Badge>}
-                    </span>
-                    <span className="strong num">{p.amount}</span>
+                <Card>
+                  <CardHead title="Flux en direct" sub="Qui fait quoi, en ce moment" right={<span className="live-pill" style={{ height: 26 }}><span className="pulse" /> Live</span>} />
+                  <div style={{ padding: '8px 20px 6px' }}>
+                    <LiveFeed initial={d.feed} />
                   </div>
-                  <div className="row" style={{ marginTop: 10, gap: 14 }}>
-                    <span className="muted" style={{ width: 120, fontSize: 13 }}>{p.kind}</span>
-                    <Progress value={p.pct} />
-                    <span className="muted" style={{ fontSize: 13, whiteSpace: 'nowrap' }}>{p.pct} % cartes</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </Card>
+                </Card>
+              </div>
 
-          <Card>
-            <CardHead title="Alertes de stock" right={<span className="muted" style={{ fontSize: 13 }}>3 actives</span>} />
-            <div style={{ padding: '6px 20px 10px' }}>
-              {[
-                { icon: TriangleAlert, tone: 'red', t: 'Gasoil · Bè Kpota', s: '2 150 L restants · seuil auto 3 400 L' },
-                { icon: TriangleAlert, tone: 'orange', t: 'Bouteilles 6 kg · Kara', s: '14 pleines · seuil 20' },
-                { icon: Mail, tone: 'blue', t: 'Email envoyé au gérant', s: 'Alerte cuve · 18:31' },
-              ].map((a) => (
-                <div key={a.t} className="list-item" style={{ borderBottom: 0, padding: '10px 0' }}>
-                  <IcoBox icon={a.icon} tone={a.tone} />
-                  <div>
-                    <div className="strong">{a.t}</div>
-                    <div className="muted" style={{ fontSize: 13, marginTop: 2 }}>{a.s}</div>
-                  </div>
+              <div className="grid" style={{ gridTemplateColumns: 'minmax(0, 1fr) 380px', alignItems: 'start' }}>
+                <Card>
+                  <CardHead
+                    title="État des stations"
+                    sub={`${d.stations.online} en ligne · ${offline} hors ligne ou instable`}
+                    right={<Button size="sm" iconRight={ArrowRight} onClick={() => navigate('/stations')}>Voir les {d.stations.total} stations</Button>}
+                  />
+                  <table className="table" style={{ marginTop: 14 }}>
+                    <thead>
+                      <tr>
+                        <th>Station</th><th>Statut</th><th>Mode</th><th className="r">Recette du jour</th><th>Cuves</th><th>État</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {d.stationStates.map((s) => (
+                        <tr key={s.id} className="tr-click" onClick={() => navigate(`/stations/${s.id}`)}>
+                          <td>
+                            <div className="row" style={{ gap: 12 }}>
+                              <IcoBox icon={Fuel} tone="gray" size={32} />
+                              <div>
+                                <div className="cell-title">{s.shortName}</div>
+                                <div className="cell-sub">{s.typeLabel}</div>
+                              </div>
+                            </div>
+                          </td>
+                          <td><StatusBadge status={s.statusLabel} /></td>
+                          <td><Badge tone={s.mode === 'AUTONOME' ? 'navy' : 'blue'}>{s.modeLabel}</Badge></td>
+                          <td className="r num strong">{s.revenueToday ? fcfa(s.revenueToday) : '—'}</td>
+                          <td><CuveBars levels={(s.tanks || []).map((t) => t.pct)} /></td>
+                          <td>{s.state && <Badge tone={ETAT_TONE(s.state)}>{s.state}</Badge>}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </Card>
+
+                <div className="stack">
+                  <Card>
+                    <CardHead title="Points de vente ouverts" right={<Badge tone="green">{d.pdv.length} ouverts</Badge>} />
+                    <div style={{ padding: '6px 20px 14px' }}>
+                      {d.pdv.length === 0 && <Empty>Aucun point de vente ouvert</Empty>}
+                      {d.pdv.map((p) => (
+                        <div key={p.id} className="tr-click" style={{ padding: '14px 0', borderBottom: '1px solid var(--border-2)' }} onClick={() => navigate(`/points-de-vente?id=${p.id}`)}>
+                          <div className="row between">
+                            <span className="row" style={{ gap: 8 }}>
+                              <span className="strong">{p.name}</span>
+                              {p.offline && <Badge tone="orange">Hors ligne · {ago(p.lastSyncAt)}</Badge>}
+                            </span>
+                            <span className="strong num">{money(p.amount)}</span>
+                          </div>
+                          <div className="row" style={{ marginTop: 10, gap: 14 }}>
+                            <span className="muted" style={{ width: 130, fontSize: 13 }}>
+                              {p.kind === 'PERMANENT' ? 'Permanent' : `Temporaire · J-${p.daysLeft ?? '?'}`}
+                            </span>
+                            <Progress value={Number(p.soldPct)} />
+                            <span className="muted" style={{ fontSize: 13, whiteSpace: 'nowrap' }}>{num(p.soldPct)} % cartes</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </Card>
+
+                  <Card>
+                    <CardHead title="Alertes de stock" right={<span className="muted" style={{ fontSize: 13 }}>{d.stockAlerts.length} actives</span>} />
+                    <div style={{ padding: '6px 20px 10px' }}>
+                      {d.stockAlerts.length === 0 && <Empty>Aucune alerte</Empty>}
+                      {d.stockAlerts.map((a) => (
+                        <div key={a.id} className="list-item tr-click" style={{ borderBottom: 0, padding: '10px 0' }} onClick={() => navigate('/ventes-stocks')}>
+                          <IcoBox icon={a.tankId ? TriangleAlert : Mail} tone={a.severity === 'CRITIQUE' ? 'red' : 'orange'} />
+                          <div>
+                            <div className="strong">{a.productName} · {a.place}</div>
+                            <div className="muted" style={{ fontSize: 13, marginTop: 2 }}>
+                              {num(a.level)}{a.tankId ? ' L' : ''} restants · seuil {num(a.threshold)}{a.tankId ? ' L' : ''} · {ago(a.raisedAt)}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </Card>
                 </div>
-              ))}
-            </div>
-          </Card>
-        </div>
-      </div>
+              </div>
+            </>
+          );
+        }}
+      </Async>
     </>
   );
 }

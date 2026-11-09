@@ -1,4 +1,7 @@
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { SessionProvider, RequireAuth } from './api/session.jsx';
+import { LiveProvider } from './api/live.jsx';
+import { ToastProvider } from './components/feedback.jsx';
 import Layout from './components/Layout.jsx';
 import Login from './pages/Login.jsx';
 import Dashboard from './pages/Dashboard.jsx';
@@ -19,9 +22,12 @@ import Clients from './pages/Clients.jsx';
 export default function App() {
   return (
     <HashRouter>
+      <SessionProvider>
+        <LiveProvider>
+          <ToastProvider>
       <Routes>
         <Route path="/login" element={<Login />} />
-        <Route element={<Layout />}>
+        <Route element={<RequireAuth><Layout /></RequireAuth>}>
           <Route path="/" element={<Dashboard />} />
           <Route path="/stations" element={<Stations />} />
           <Route path="/stations/:id" element={<StationDetail />} />
@@ -36,8 +42,11 @@ export default function App() {
           <Route path="/rapports" element={<Rapports />} />
           <Route path="/journal" element={<Journal />} />
         </Route>
-        <Route path="*" element={<Navigate to="/login" replace />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+          </ToastProvider>
+        </LiveProvider>
+      </SessionProvider>
     </HashRouter>
   );
 }

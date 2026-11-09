@@ -17,7 +17,7 @@ function smoothPath(pts) {
 }
 
 /* Courbe de recette cumulée : aujourd'hui (plein) vs hier (pointillés) */
-export function AreaChart({ today, yesterday, max = 20, height = 300, xLabels, yLabels }) {
+export function AreaChart({ today, yesterday, max = 20, height = 300, xLabels, yLabels, points }) {
   const W = 680;
   const H = height;
   const padL = 44;
@@ -26,11 +26,14 @@ export function AreaChart({ today, yesterday, max = 20, height = 300, xLabels, y
   const padB = 28;
   const iw = W - padL - padR;
   const ih = H - padT - padB;
+  // points : nombre total de positions sur l'axe (la courbe du jour peut s'arrêter avant la fin)
+  const count = Math.max(points || 0, today.length, yesterday.length, 2);
   const toPts = (arr) =>
-    arr.map((v, i) => [padL + (i / (arr.length - 1)) * iw, padT + ih - (v / max) * ih]);
+    arr.map((v, i) => [padL + (i / (count - 1)) * iw, padT + ih - (Math.min(v, max) / max) * ih]);
   const pT = toPts(today);
   const pY = toPts(yesterday);
-  const line = smoothPath(pT);
+  if (!pT.length) pT.push([padL, padT + ih]);
+  const line = smoothPath(pT.length > 1 ? pT : [...pT, pT[0]]);
   const last = pT[pT.length - 1];
   const area = `${line} L ${last[0]} ${padT + ih} L ${pT[0][0]} ${padT + ih} Z`;
 
@@ -55,7 +58,7 @@ export function AreaChart({ today, yesterday, max = 20, height = 300, xLabels, y
       })}
       {xLabels.map((l, i) => (
         <text
-          key={l}
+          key={`${l}-${i}`}
           x={padL + (i / (xLabels.length - 1)) * iw}
           y={H - 6}
           textAnchor="middle"
@@ -76,7 +79,7 @@ export function AreaChart({ today, yesterday, max = 20, height = 300, xLabels, y
 
 /* Barres groupées (Super / Gasoil) */
 export function GroupedBars({ data, labels, colors = ['#1b66b8', '#8cc63f'], height = 200 }) {
-  const max = Math.max(...data.flat()) * 1.05;
+  const max = Math.max(1, ...data.flat()) * 1.05;
   return (
     <div style={{ display: 'flex', alignItems: 'flex-end', height, gap: 0 }}>
       {data.map((group, i) => (
@@ -103,7 +106,7 @@ export function GroupedBars({ data, labels, colors = ['#1b66b8', '#8cc63f'], hei
 
 /* Anneau à segments */
 export function Donut({ segments, size = 140, thickness = 18, gap = 1.2, children }) {
-  const total = segments.reduce((s, x) => s + x.value, 0);
+  const total = segments.reduce((s, x) => s + x.value, 0) || 1;
   const r = (size - thickness) / 2;
   const c = 2 * Math.PI * r;
   let offset = 0;
@@ -153,7 +156,7 @@ export function Ring({ value, max, size = 110, color = '#f29e1f', children }) {
           stroke={color}
           strokeWidth={thickness}
           strokeLinecap="round"
-          strokeDasharray={`${(value / max) * c} ${c}`}
+          strokeDasharray={`${Math.max(0, Math.min(1, value / max)) * c} ${c}`}
         />
       </svg>
       <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', textAlign: 'center' }}>
@@ -161,4 +164,28 @@ export function Ring({ value, max, size = 110, color = '#f29e1f', children }) {
       </div>
     </div>
   );
+}
+
+/** Échelle « ronde » pour un axe : 0 → max arrondi, avec n graduations. */
+export function niceScale(maxValue, steps = 4) {
+  const raw = Math.max(maxValue, 1) / steps;
+  const pow = 10 ** Math.floor(Math.log10(raw));
+  const unit = [1, 2, 2.5, 5, 10].map((m) => m * pow).find((m) => m >= raw);
+  return { max: unit * steps, ticks: Array.from({ length: steps + 1 }, (_, i) => unit * i) };
+}
+
+/** Litres par heure (24 valeurs par carburant) → barres groupées de 6 h à 22 h, par tranches de 2 h. */
+export function hourlyBars(byHour, fuels = ['SUPER', 'GASOIL'], from = 6, to = 22, step = 2) {
+  const data = [];
+  const labels = [];
+  for (let h = from; h <= to; h += step) {
+    labels.push(`${h}h`);
+    data.push(fuels.map((f) => {
+      const arr = byHour?.[f] || [];
+      let sum = 0;
+      for (let k = h; k < Math.min(h + step, 24); k++) sum += Number(arr[k] || 0);
+      return sum;
+    }));
+  }
+  return { data, labels };
 }

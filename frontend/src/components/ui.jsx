@@ -98,6 +98,33 @@ const STATUS = {
   Pause: ['orange', true],
   'Expire bientôt': ['orange', true],
   Résiliée: ['red', true],
+  Expirée: ['red', true],
+  Aucune: ['mutedgray', false],
+  'À activer': ['orange', true],
+  'À commenter': ['orange', false],
+  Brouillon: ['blue', false],
+  Commenté: ['green', false],
+  Incomplet: ['red', false],
+  'Attente Comptable': ['orange', true],
+  'Attente DAF': ['orange', true],
+  'Attente Admin / DAF': ['orange', true],
+  Créditée: ['green', true],
+  'En validation': ['orange', true],
+  Clos: ['mutedgray', true],
+  'Clos · reste à remettre': ['orange', true],
+  'Clos · excédent': ['blue', true],
+  'En pause': ['orange', true],
+  Désactivé: ['mutedgray', true],
+  Demandée: ['orange', true],
+  Validée: ['blue', true],
+  'En route': ['green', true],
+  Livrée: ['mutedgray', true],
+  Annulée: ['red', true],
+  'À clôturer': ['orange', true],
+  Refusé: ['red', true],
+  'Montant invalide': ['red', true],
+  'Carte inactive': ['red', true],
+  Doublon: ['red', true],
 };
 export function StatusBadge({ status, children }) {
   const [tone, dot] = STATUS[status] || ['gray', false];
@@ -122,13 +149,32 @@ export function Button({ variant, size, icon: Icon, iconRight: IconRight, childr
   );
 }
 
-export function Select({ icon: Icon, children, style }) {
+/**
+ * Liste de choix. Avec `options` ([{ value, label }] ou chaînes) : vraie liste déroulante ;
+ * sans options : simple bouton d'apparence identique.
+ */
+export function Select({ icon: Icon, children, style, options, value, onChange, placeholder }) {
+  if (!options) {
+    return (
+      <button className="select" style={style} type="button">
+        {Icon && <Icon size={16} strokeWidth={1.8} />}
+        {children}
+        <ChevronDown size={15} className="chev" />
+      </button>
+    );
+  }
   return (
-    <button className="select" style={style}>
+    <label className="select" style={style}>
       {Icon && <Icon size={16} strokeWidth={1.8} />}
-      {children}
+      <select value={value ?? ''} onChange={(e) => onChange?.(e.target.value)}>
+        {placeholder !== undefined && <option value="">{placeholder}</option>}
+        {options.map((o) => {
+          const opt = typeof o === 'string' ? { value: o, label: o } : o;
+          return <option key={opt.value} value={opt.value}>{opt.label}</option>;
+        })}
+      </select>
       <ChevronDown size={15} className="chev" />
-    </button>
+    </label>
   );
 }
 
@@ -136,9 +182,42 @@ export function SearchInput({ placeholder, icon: Icon, style, value, onChange })
   return (
     <label className="input" style={style}>
       <Icon size={17} strokeWidth={1.8} />
-      <input placeholder={placeholder} value={value} onChange={onChange} />
+      <input placeholder={placeholder} value={value ?? ''} onChange={onChange} />
     </label>
   );
+}
+
+/* ---------- États de chargement ---------- */
+export function Loading({ label = 'Chargement…', style }) {
+  return (
+    <div className="state-box" style={style}>
+      <span className="spinner" /> <span style={{ marginLeft: 8 }}>{label}</span>
+    </div>
+  );
+}
+
+export function ErrorState({ error, onRetry, style }) {
+  return (
+    <div className="state-box error" style={style}>
+      {error?.message || 'Erreur de chargement'}
+      {onRetry && (
+        <div style={{ marginTop: 12 }}>
+          <button className="btn btn-sm" onClick={onRetry}>Réessayer</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function Empty({ children = 'Aucun élément', style }) {
+  return <div className="state-box" style={style}>{children}</div>;
+}
+
+/** Affiche le chargement / l'erreur d'un useApi, sinon le contenu. */
+export function Async({ state, children, minHeight = 120 }) {
+  if (state.error && !state.data) return <ErrorState error={state.error} onRetry={state.reload} style={{ minHeight }} />;
+  if (!state.data) return <Loading style={{ minHeight }} />;
+  return children(state.data);
 }
 
 export function Checkbox({ checked, onChange }) {
@@ -149,9 +228,18 @@ export function Checkbox({ checked, onChange }) {
   );
 }
 
-export function Toggle({ defaultOn = true }) {
-  const [on, setOn] = useState(defaultOn);
-  return <button type="button" className={`toggle ${on ? 'on' : ''}`} onClick={() => setOn(!on)} />;
+/** Interrupteur : contrôlé (on / onChange) ou autonome (defaultOn). */
+export function Toggle({ defaultOn = true, on, onChange, disabled }) {
+  const [local, setLocal] = useState(defaultOn);
+  const value = on ?? local;
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      className={`toggle ${value ? 'on' : ''}`}
+      onClick={() => (onChange ? onChange(!value) : setLocal(!value))}
+    />
+  );
 }
 
 export function Segmented({ items, value, onChange }) {
@@ -184,7 +272,12 @@ const AVATAR_COLORS = {
   forest: '#2e7d32',
   indigo: '#4f5bb5',
 };
-export function Avatar({ initials, color = 'blue', size = 36 }) {
+export function Avatar({ initials, color = 'blue', size = 36, photo }) {
+  if (photo) {
+    return (
+      <img className="avatar" src={photo} alt={initials} style={{ width: size, height: size, objectFit: 'cover' }} />
+    );
+  }
   return (
     <span
       className="avatar"
@@ -241,6 +334,26 @@ export function BankCard({ number, holder, exp, kind = 'FLOTTE', large = false }
       <div className="row between small" style={{ marginTop: large ? 16 : 10, position: 'relative', fontSize: large ? 11.5 : 10.5 }}>
         <span>{holder}</span>
         <span>EXP. {exp}</span>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- Pagination (réponses { items, total, page, size } de l'API) ---------- */
+export function Pager({ data, page, onPage, label = 'éléments' }) {
+  if (!data || data.total <= data.size) {
+    return data ? <div className="pager"><span>{data.total} {label}</span></div> : null;
+  }
+  const pages = Math.ceil(data.total / data.size);
+  const from = page * data.size + 1;
+  const to = Math.min(data.total, from + data.items.length - 1);
+  return (
+    <div className="pager">
+      <span>Affichage de {from} à {to} sur {data.total.toLocaleString('fr-FR')} {label}</span>
+      <div className="row" style={{ gap: 8 }}>
+        <button className="btn btn-sm" disabled={page === 0} onClick={() => onPage(page - 1)}>Précédent</button>
+        <span className="num">{page + 1} / {pages}</span>
+        <button className="btn btn-sm" disabled={page >= pages - 1} onClick={() => onPage(page + 1)}>Suivant</button>
       </div>
     </div>
   );

@@ -1,5 +1,7 @@
-# Base de données de développement : PostgreSQL 17 sur le port 5434
-#   docker compose up -d
+# Démarrage complet : base PostgreSQL + API avec les données de démonstration
+#   docker compose up -d --build        → API sur http://localhost:8090
+#   puis : cd frontend && npm install && npm run dev   → http://localhost:5173
+# Seulement la base (API lancée avec ./mvnw) :  docker compose up -d db
 services:
   db:
     image: postgres:17
@@ -20,5 +22,24 @@ services:
       timeout: 3s
       retries: 10
 
+  api:
+    build: ./backend
+    container_name: zener-station-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_URL: jdbc:postgresql://db:5432/zener_station
+      DB_USER: zener
+      DB_PASSWORD: zener
+      DEMO_DATA: "true"          # données de démonstration + simulateur (à retirer avant la production)
+      CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173,null
+    ports:
+      - "8090:8090"
+    volumes:
+      - zener-uploads:/app/uploads
+
 volumes:
   zener-pgdata:
+  zener-uploads:

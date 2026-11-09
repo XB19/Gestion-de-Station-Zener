@@ -13,7 +13,10 @@ npm run electron       # build de production puis ouverture dans Electron
 npm run dist           # installeur Windows (.exe) dans dist/ via electron-builder
 ```
 
-L'application s'ouvre sur l'écran de connexion ; « Se connecter » mène au tableau de bord.
+L'application parle à l'API backend (`http://localhost:8090` par défaut, réglable avec `VITE_API_URL`,
+voir `.env.example`). Démarrez d'abord le backend (voir le README à la racine), puis connectez-vous :
+les badges « Accès selon votre rôle » de l'écran de connexion remplissent les comptes de démonstration
+(mot de passe `zener-station`).
 
 ## Structure
 
@@ -28,7 +31,14 @@ src/
     ui.jsx            composants réutilisables (Kpi, Badge, Button, Select, BankCard…)
     charts.jsx        graphiques SVG (courbe, barres, anneaux) sans dépendance
     ZenerLogo.jsx     logo ZENER en SVG
-  data/stations.js    données de démonstration partagées
+    feedback.jsx      notifications, fenêtres modales, champs de formulaire
+  api/
+    client.js         appels à l'API (jeton JWT, erreurs en français, téléchargements)
+    session.jsx       connexion, utilisateur courant et droits (can(...))
+    live.jsx          flux temps réel SSE (/api/live) partagé par les écrans
+    hooks.js          useApi (chargement), useLiveReload (rafraîchissement en direct)
+  lib/                formats (FCFA, dates), icônes du journal
+  data/togo.js        frontière du Togo pour la carte
   pages/              un fichier par écran de maquette (14 écrans)
 ```
 
@@ -49,5 +59,6 @@ src/
 | 13 Journal d'opérations | `#/journal` | `Journal.jsx` |
 | 14 Clients & licences | `#/clients` | `Clients.jsx` |
 
-Les données affichées sont des données de démonstration codées dans chaque page
-(ou `src/data/`) : c'est l'endroit à brancher sur l'API backend.
+Toutes les données viennent de l'API ; les écrans se mettent à jour en direct grâce au flux temps réel
+(opérations, ventes, pistolets, stations). Les boutons n'apparaissent que si l'utilisateur a le droit
+correspondant (ex. « Approuver » pour la Comptable et le DAF, « Nouvelle station » pour l'Admin).

@@ -9,9 +9,9 @@ import '@fontsource/inter/900.css';
 import './styles/global.css';
 import App from './App.jsx';
 
-// L'application démarre sur l'écran de connexion
-if (!window.location.hash || window.location.hash === '#/') {
-  window.location.hash = '#/login';
+// Sans session, les pages protégées redirigent vers l'écran de connexion
+if (!window.location.hash) {
+  window.location.hash = '#/';
 }
 
 ReactDOM.createRoot(document.getElementById('root')).render(

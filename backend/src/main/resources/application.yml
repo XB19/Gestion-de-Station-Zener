@@ -42,12 +42,13 @@ app:
     # 32 caractères minimum ; à remplacer en production (variable JWT_SECRET)
     secret: ${JWT_SECRET:dev-secret-zener-station-manager-change-me-0123456789}
     ttl-hours: ${JWT_TTL_HOURS:12}
-  cors-origins: ${CORS_ORIGINS:http://localhost:5173,null}
+  cors-origins: ${CORS_ORIGINS:http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,null}
   upload-dir: ${UPLOAD_DIR:./uploads}
   mail:
     from: ${MAIL_FROM:station-manager@zener.tg}
-  # Données de démonstration (stations, cartes, ventes…) reprenant les maquettes
-  demo-data: ${DEMO_DATA:false}
+  # Données de démonstration reprenant les maquettes + simulateur d'activité (paquet demo).
+  # Actives par défaut pour la phase de test ; DEMO_DATA=false (et retrait du paquet demo) avant la production.
+  demo-data: ${DEMO_DATA:true}
 
 logging:
   level:

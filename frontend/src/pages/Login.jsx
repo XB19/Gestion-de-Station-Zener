@@ -1,37 +1,79 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import {
   Mail, Lock, Eye, EyeOff, ArrowRight, ShieldCheck, Radio, Banknote, Wifi, CreditCard, Fuel, Wallet,
 } from 'lucide-react';
 import { ZenerMark, ZenerWordmark } from '../components/ZenerLogo.jsx';
 import { Checkbox, IcoBox } from '../components/ui.jsx';
+import { api } from '../api/client.js';
+import { useSession } from '../api/session.jsx';
+import { ago, compact, date, num, pct } from '../lib/format.js';
 import './login.css';
 
-const STATS = [
-  { icon: Banknote, label: 'Recette du jour', value: '18,45 M', sub: 'FCFA · +12,4 %' },
-  { icon: Wifi, label: 'Stations en ligne', value: '38 / 42', sub: '3 pays' },
-  { icon: CreditCard, label: 'Cartes actives', value: '12 480', sub: 'dont 312 flottes' },
+// Comptes de démonstration (mot de passe commun « zener-station ») : un clic remplit le formulaire
+const ROLES = [
+  ['Admin', 'ama.kpodar@zener.tg'],
+  ['Gérant', 'kossi.amegah@zener.tg'],
+  ['Chef de poste', 'yao.agbeko@zener.tg'],
+  ['Pompiste', 'komlan.tetteh@zener.tg'],
+  ['Comptable', 'abla.gbeasor@zener.tg'],
+  ['DAF', 'mawuli.kpodar@zener.tg'],
+  ['Agent PDV', 'delali.agbo@zener.tg'],
+  ['Livreur', 'edem.akakpo@zener.tg'],
 ];
-
-const FEED = [
-  { icon: Fuel, tone: 'blue', t: 'Vente · 42,5 L Super', s: 'Agoè Assiyéyé · Pompe 3', v: '28 900 F' },
-  { icon: Wallet, tone: 'green', t: 'Recharge carte ···2847', s: 'Siège Lomé', v: '50 000 F' },
-  { icon: ShieldCheck, tone: 'orange', t: 'Montant validé par le DAF', s: 'Translom SARL', v: '2,5 M F' },
-];
-
-const ROLES = ['Admin', 'Gérant', 'Chef de poste', 'Pompiste', 'Comptable', 'DAF'];
 
 export default function Login() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const { user, login } = useSession();
   const [show, setShow] = useState(false);
   const [remember, setRemember] = useState(true);
   const [email, setEmail] = useState('ama.kpodar@zener.tg');
   const [pwd, setPwd] = useState('zener-station');
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [overview, setOverview] = useState(null);
 
-  const submit = (e) => {
+  // chiffres du réseau et dernières opérations (sans connexion), rafraîchis toutes les 10 s
+  useEffect(() => {
+    let alive = true;
+    const load = () => api('/public/overview').then((o) => alive && setOverview(o)).catch(() => {});
+    load();
+    const id = setInterval(load, 10_000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, []);
+
+  if (user) return <Navigate to={location.state?.from || '/'} replace />;
+
+  const submit = async (e) => {
     e.preventDefault();
-    navigate('/');
+    setBusy(true);
+    setError(null);
+    try {
+      await login(email.trim(), pwd, remember);
+      navigate(location.state?.from || '/', { replace: true });
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
   };
+
+  const o = overview || {};
+  const change = o.revenueYesterday ? ((o.revenueToday - o.revenueYesterday) / o.revenueYesterday) * 100 : null;
+  const stats = [
+    { icon: Banknote, label: 'Recette du jour', value: overview ? compact(o.revenueToday) : '…',
+      sub: change === null ? 'FCFA' : `FCFA · ${change >= 0 ? '+' : '−'}${pct(change)}` },
+    { icon: Wifi, label: 'Stations en ligne', value: overview ? `${o.stationsOnline} / ${o.stationsTotal}` : '…',
+      sub: overview ? `${o.countries} pays` : '' },
+    { icon: CreditCard, label: 'Cartes actives', value: overview ? num(o.activeCards) : '…',
+      sub: overview ? `dont ${num(o.fleetCards)} flottes` : '' },
+  ];
+  const FEED_ICON = { VENTES_CARBURANT: [Fuel, 'blue'], RECHARGES: [Wallet, 'green'], VALIDATIONS: [ShieldCheck, 'orange'],
+    VENTES_CARTES: [CreditCard, 'navy'] };
 
   return (
     <div className="login">
@@ -56,7 +98,7 @@ export default function Login() {
           </p>
 
           <div className="hero-stats">
-            {STATS.map(({ icon: Icon, label, value, sub }) => (
+            {stats.map(({ icon: Icon, label, value, sub }) => (
               <div key={label} className="hero-stat">
                 <div className="l">
                   <Icon size={16} strokeWidth={1.8} /> {label}
@@ -74,16 +116,20 @@ export default function Login() {
                 <span className="pulse" /> Live
               </span>
             </div>
-            {FEED.map((f) => (
-              <div key={f.t} className="list-item" style={{ padding: '11px 0' }}>
-                <IcoBox icon={f.icon} tone={f.tone} size={30} />
-                <div style={{ flex: 1 }}>
-                  <div className="strong" style={{ fontSize: 13.5 }}>{f.t}</div>
-                  <div className="muted" style={{ fontSize: 12.5 }}>{f.s}</div>
+            {(o.feed || []).map((f, i) => {
+              const [icon, tone] = FEED_ICON[f.category] || [Fuel, 'blue'];
+              return (
+                <div key={`${f.at}-${i}`} className="list-item" style={{ padding: '11px 0' }}>
+                  <IcoBox icon={icon} tone={tone} size={30} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="strong" style={{ fontSize: 13.5 }}>{f.title}</div>
+                    <div className="muted" style={{ fontSize: 12.5 }}>{[f.place, ago(f.at)].filter(Boolean).join(' · ')}</div>
+                  </div>
+                  <div className="strong num">{f.amount ? `${compact(f.amount)} F` : ''}</div>
                 </div>
-                <div className="strong num">{f.v}</div>
-              </div>
-            ))}
+              );
+            })}
+            {!overview && <div className="muted" style={{ padding: '12px 0', fontSize: 13 }}>Connexion au serveur…</div>}
           </div>
         </div>
 
@@ -123,19 +169,35 @@ export default function Login() {
             <a className="strong" style={{ color: 'var(--primary)' }} href="#/login">Mot de passe oublié ?</a>
           </div>
 
-          <button type="submit" className="btn btn-primary btn-block" style={{ height: 46, marginTop: 24, fontSize: 15 }}>
+          {error && <div className="form-error" style={{ marginTop: 18 }}>{error}</div>}
+
+          <button type="submit" disabled={busy} className="btn btn-primary btn-block" style={{ height: 46, marginTop: 24, fontSize: 15 }}>
+            {busy ? <span className="spinner" style={{ width: 16, height: 16, borderTopColor: '#fff' }} /> : null}
             Se connecter <ArrowRight size={17} />
           </button>
 
-          <div className="divider-text" style={{ marginTop: 30 }}>Accès selon votre rôle</div>
+          <div className="divider-text" style={{ marginTop: 30 }}>Accès selon votre rôle · comptes de démonstration</div>
           <div className="row" style={{ flexWrap: 'wrap', gap: 8, marginTop: 18 }}>
-            {ROLES.map((r) => (
-              <span key={r} className="badge gray" style={{ height: 28, padding: '0 10px' }}>{r}</span>
+            {ROLES.map(([r, mail]) => (
+              <button
+                type="button"
+                key={r}
+                className={`badge ${email === mail ? 'blue' : 'gray'}`}
+                style={{ height: 28, padding: '0 10px', border: 0, cursor: 'pointer' }}
+                title={mail}
+                onClick={() => {
+                  setEmail(mail);
+                  setPwd('zener-station');
+                }}
+              >
+                {r}
+              </button>
             ))}
           </div>
 
           <div className="row muted" style={{ marginTop: 34, fontSize: 13, gap: 8 }}>
-            <ShieldCheck size={16} color="var(--green)" /> Connexion chiffrée · Licence active jusqu’au 31/12/2026
+            <ShieldCheck size={16} color="var(--green)" /> Connexion chiffrée
+            {o.licenceEnd ? ` · Licence active jusqu’au ${date(o.licenceEnd)}` : ''}
           </div>
         </form>
       </section>

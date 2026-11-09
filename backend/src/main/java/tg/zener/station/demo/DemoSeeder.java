@@ -325,7 +325,8 @@ public class DemoSeeder {
                 st.pumps.put(pumps[p][0], pid);
             }
             String[] fuels = {"SUPER", "GASOIL", "PETROLE"};
-            int[] capacity = {30_000, 30_000, 10_000};
+            boolean big = "Lomé".equals(sp.zone());
+            int[] capacity = big ? new int[] {50_000, 50_000, 15_000} : new int[] {30_000, 30_000, 10_000};
             for (int t = 0; t < 3; t++) {
                 long tid = db.insert("""
                         \sINSERT INTO tank (station_id, product_id, name, capacity, volume, lead_days)
@@ -342,10 +343,12 @@ public class DemoSeeder {
                 st.configs.add(new Config(cid, (String) c[0], LocalTime.parse((String) c[1]), LocalTime.parse((String) c[2])));
             }
             // articles de la boutique et parc de bouteilles
-            Object[][] articles = {{"HUILE_5W30_5L", 36, 80}, {"HUILE_2T_1L", 48, 120}, {"BRULEUR_GAZ", 14, 40}, {"GAZ_6", 22, 60},
-                    {"GAZ_12_5", 30, 80}};
+            // quantités proportionnelles à l'activité de la station
+            double size = 0.8 + sp.revenue() / 700_000.0;
+            Object[][] articles = {{"HUILE_5W30_5L", 60}, {"HUILE_2T_1L", 90}, {"BRULEUR_GAZ", 45}, {"GAZ_6", 70}, {"GAZ_12_5", 90}};
             for (Object[] a : articles) {
-                int q = (Integer) a[1] + rnd.nextInt(10);
+                int q = (int) Math.round((Integer) a[1] * size) + rnd.nextInt(10);
+                int cap = q * 2;
                 Integer manual = null;
                 if ("ST-001".equals(sp.code()) && "HUILE_2T_1L".equals(a[0])) {
                     q = 6;
@@ -358,7 +361,7 @@ public class DemoSeeder {
                 db.update("""
                         \sINSERT INTO stock_level (station_id, product_id, quantity, capacity, threshold_manual, lead_days)
                         VALUES (:s, :p, :q, :c, :m, 5)""",
-                        Db.p("s", st.id, "p", products.get((String) a[0]), "q", BigDecimal.valueOf(q), "c", BigDecimal.valueOf((Integer) a[2]),
+                        Db.p("s", st.id, "p", products.get((String) a[0]), "q", BigDecimal.valueOf(q), "c", BigDecimal.valueOf(cap),
                                 "m", manual == null ? null : BigDecimal.valueOf(manual)));
             }
             for (String g : List.of("GAZ_6", "GAZ_12_5")) {
@@ -498,7 +501,7 @@ public class DemoSeeder {
         db.update("""
                 \sUPDATE card SET vehicle_plate = 'TG 4521 BK', vehicle_label = 'Camion Renault Kerax', driver_name = 'Kokou Attiogbé'
                 WHERE id = :c""", Db.p("c", c.id));
-        permissions(c.id, new String[] {"SUPER", "GASOIL"}, 1_500_000L, 8_000_000L, null, new Integer[] {1, 2, 3, 4, 5, 6},
+        permissions(c.id, new String[] {"SUPER", "GASOIL"}, 3_000_000L, 25_000_000L, null, new Integer[] {1, 2, 3, 4, 5, 6},
                 LocalTime.of(6, 0), LocalTime.of(20, 0), null, true);
 
         c = card("601128474410", "VIP", "M1", komi, null, kossi, abla, "ACTIVE", "Komi", 46_000, 150_000, 2, false);
@@ -507,7 +510,7 @@ public class DemoSeeder {
         c.fuels = Set.of("GASOIL");
         db.update("UPDATE card SET vehicle_plate = 'TG 7710 AH', vehicle_label = 'Isuzu NPR', driver_name = 'Elom Fiagan' WHERE id = :c",
                 Db.p("c", c.id));
-        permissions(c.id, new String[] {"GASOIL", "LUBRIFIANT"}, null, 2_500_000L, 200_000L, new Integer[] {1, 2, 3, 4, 5, 6, 7},
+        permissions(c.id, new String[] {"GASOIL", "LUBRIFIANT"}, null, 15_000_000L, 200_000L, new Integer[] {1, 2, 3, 4, 5, 6, 7},
                 null, null, null, true);
 
         c = card("601133021209", "CLASSIQUE", "M1", akossiwa, null, kossi, abla, "ACTIVE", "Akossiwa", 2_500, 40_000, 1, false);
@@ -522,7 +525,7 @@ public class DemoSeeder {
         Long[] lome = stations.stream().filter(s -> "Lomé".equals(s.spec.zone())).map(s -> s.id).toArray(Long[]::new);
         c = card("601144170028", "FLOTTE", "PUCE", lomelog, gNav, kossi, abla, "ACTIVE", "LomeLog", 2_015_000, 2_500_000, 3, true);
         c.stationCodes = Set.of("ST-001", "ST-002", "ST-003");
-        permissions(c.id, new String[] {"SUPER", "GASOIL", "LUBRIFIANT"}, 1_500_000L, null, null, new Integer[] {1, 2, 3, 4, 5, 6, 7},
+        permissions(c.id, new String[] {"SUPER", "GASOIL", "LUBRIFIANT"}, 3_000_000L, null, null, new Integer[] {1, 2, 3, 4, 5, 6, 7},
                 null, null, lome, true);
 
         // carte vendue à la Foire, désactivée
@@ -796,7 +799,7 @@ public class DemoSeeder {
         if ("ST-002".equals(st.spec.code())) {
             factor *= 1 + 0.02 * index; // consommation de gasoil en hausse : seuil ajusté à la hausse
         }
-        long target = Math.round(st.spec.revenue() * 1.2 * factor);
+        long target = Math.round(st.spec.revenue() * 1.7 * factor);
         long sum = 0;
         while (sum < target) {
             LocalDateTime at = d.atTime(pick(HOURS), rnd.nextInt(60), rnd.nextInt(60));
@@ -1363,8 +1366,8 @@ public class DemoSeeder {
                         "at", ts(now.minusDays(1).withHour(11))));
 
         // en route, avec son trajet GPS
-        long route = order(translom, cardIds.get("Translom"), "GASOIL", 5000, "Dépôt Translom, zone portuaire, Lomé", 6.1372, 1.2861,
-                agoe.id, edem, "Citerne TG 9032 AB", "EN_ROUTE", "CARTE", now.minusHours(3), ama);
+        long route = order(translom, null, "GASOIL", 5000, "Dépôt Translom, zone portuaire, Lomé", 6.1372, 1.2861,
+                agoe.id, edem, "Citerne TG 9032 AB", "EN_ROUTE", "VIREMENT", now.minusMinutes(25), ama);
         double[] from = {agoe.spec.lat(), agoe.spec.lon()};
         double[] to = {6.1372, 1.2861};
         for (int i = 0; i <= 12; i++) {
@@ -1392,7 +1395,8 @@ public class DemoSeeder {
                                             requested_for, status, source_station_id, agent_id, vehicle, payment_method, created_by,
                                             created_at, departed_at, delivered_at)
                 VALUES (:ref, :h, :c, :p, :q, :u, :a, :lat, :lon, :rf, :st, :src, :ag, :v, :pm, :by, :at,
-                        CASE WHEN :st IN ('EN_ROUTE', 'LIVREE') THEN CAST(:at AS timestamp) + interval '2 hours' END,
+                        CASE WHEN :st = 'EN_ROUTE' THEN CAST(:at AS timestamp) + interval '5 minutes'
+                             WHEN :st = 'LIVREE' THEN CAST(:at AS timestamp) + interval '2 hours' END,
                         CASE WHEN :st = 'LIVREE' THEN CAST(:at AS timestamp) + interval '3 hours' END)""",
                 Db.p("ref", refs.delivery(), "h", holder, "c", card, "p", products.get(fuel), "q", BigDecimal.valueOf(quantity), "u", unit,
                         "a", address, "lat", BigDecimal.valueOf(lat), "lon", BigDecimal.valueOf(lon), "rf", ts(created.plusHours(4)),
@@ -1433,6 +1437,7 @@ public class DemoSeeder {
         settings.set("demo.seeded", "true");
         settings.set("demo.online_codes", "ST-001,ST-002,ST-003,ST-004,ST-005,ST-007,ST-009,ST-010");
         settings.set("demo.unstable_codes", "ST-006");
+        settings.set("demo.pdv_online_codes", "PDV-101,PDV-102");
         settings.set("email.summary_last_day", today.minusDays(1).toString());
         db.update("UPDATE station SET last_seen_at = now() - interval '20 seconds' WHERE code = ANY(:c)",
                 Db.p("c", db.array("text", settings.get("demo.online_codes", "").split(","))));

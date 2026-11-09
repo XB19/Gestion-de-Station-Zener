@@ -1,49 +1,28 @@
 import { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   ChevronRight, ArrowLeftRight, Pencil, FileText, Plus, Users, CreditCard, Check, MapPin, Fuel, Cpu, Cable,
-  TriangleAlert, Sparkles,
+  TriangleAlert, Sparkles, Trash2,
 } from 'lucide-react';
-import { PageHeader, Card, CardHead, Badge, StatusBadge, Button, Toggle, KV, Avatar } from '../components/ui.jsx';
-import { GroupedBars } from '../components/charts.jsx';
-import { stationById } from '../data/stations.js';
+import { PageHeader, Card, Badge, StatusBadge, Button, Toggle, KV, Avatar, Async, Empty } from '../components/ui.jsx';
+import { GroupedBars, hourlyBars } from '../components/charts.jsx';
+import { FormModal, Field, TextInput, SelectInput, useToast } from '../components/feedback.jsx';
+import { useApi, useInterval, useLiveReload } from '../api/hooks.js';
+import { useLiveEvent } from '../api/live.jsx';
+import { useSession } from '../api/session.jsx';
+import { del, post, put } from '../api/client.js';
+import { ago, avatarColor, date, fcfa, hhmm, isoDay, liters, longDate, num, time } from '../lib/format.js';
+import { StationFormModal } from './Stations.jsx';
 
-const PUMPS = [
-  { p: 'P1', com: 'COM1', fuel: 'Super', state: 'Distribue', l: '34,2 L' },
-  { p: 'P2', com: 'COM2', fuel: 'Super', state: 'Libre' },
-  { p: 'P3', com: 'COM3', fuel: 'Gasoil', state: 'Distribue', l: '58,0 L' },
-  { p: 'P4', com: 'COM4', fuel: 'Gasoil', state: 'Libre' },
-  { p: 'P5', com: 'COM5', fuel: 'Super', state: 'Libre' },
-  { p: 'P6', com: 'COM6', fuel: 'Gasoil', state: 'Hors service' },
-  { p: 'P7', com: 'COM7', fuel: 'Pétrole', state: 'Libre' },
-  { p: 'P8', com: 'COM8', fuel: 'Super', state: 'Distribue', l: '12,8 L' },
-];
+const PUMP_STATE = { LIBRE: 'Libre', DISTRIBUE: 'Distribue', HORS_SERVICE: 'Hors service' };
+const TANK_COLORS = { SUPER: '#2a75c4', GASOIL: '#5aa935', PETROLE: '#f2a32a' };
+const DAY_LETTERS = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
 
-const SCHEDULE = [
-  ['Lundi – Vendredi', '06:00 → 22:00', '22:00 → 06:00'],
-  ['Samedi', '06:00 → 23:00', '23:00 → 06:00'],
-  ['Dimanche & fériés', '07:00 → 20:00', '20:00 → 07:00'],
-];
-
-const TANKS = [
-  { name: 'Super', pct: 62, vol: '18 600 / 30 000 L', color: '#2a75c4', threshold: 25 },
-  { name: 'Gasoil', pct: 21, vol: '6 300 / 30 000 L', color: '#e5575c', threshold: 28 },
-  { name: 'Pétrole', pct: 48, vol: '4 800 / 10 000 L', color: '#f2a32a', threshold: 20 },
-];
-
-const TEAM = [
-  { i: 'KA', c: 'blue', n: 'Kossi Amegah', r: 'Gérant', s: 'En poste' },
-  { i: 'YA', c: 'green', n: 'Yao Agbeko', r: 'Chef de poste', s: 'En poste' },
-  { i: 'KT', c: 'navy', n: 'Komlan Tetteh', r: 'Pompiste · P1–P4', s: 'En poste' },
-  { i: 'EA', c: 'teal', n: 'Edem Akakpo', r: 'Pompiste · P5–P8', s: 'Pause' },
-];
-
-const ACTIVITY = [[42, 20], [92, 45], [84, 58], [116, 54], [104, 76], [88, 62], [138, 94], [68, 42], [26, 12]];
-
-function ModeOption({ active, icon: Icon, title, sub, onClick }) {
+function ModeOption({ active, icon: Icon, title, sub, onClick, disabled }) {
   return (
     <button
       onClick={onClick}
+      disabled={disabled}
       style={{
         flex: 1, display: 'flex', alignItems: 'center', gap: 14, padding: '16px 18px', textAlign: 'left',
         borderRadius: 12, background: '#fff',
@@ -68,229 +47,430 @@ function ModeOption({ active, icon: Icon, title, sub, onClick }) {
   );
 }
 
-function Timeline() {
-  // Autonome 00h–06h, Conventionnel 06h–22h, Autonome 22h–24h, curseur à 18:42
-  const now = ((18 + 42 / 60) / 24) * 100;
+const minutes = (t) => {
+  const [h, m] = String(t).split(':').map(Number);
+  return h * 60 + m;
+};
+
+/** Frise de la journée : plages conventionnelles du jour, autonome en dehors, curseur sur l'heure. */
+function Timeline({ windows }) {
+  const now = new Date();
+  const dow = ((now.getDay() + 6) % 7) + 1; // 1 = lundi
+  const today = windows.filter((w) => (w.days || []).includes(dow));
+  const segs = [];
+  today.forEach((w) => {
+    const a = minutes(w.conventionalFrom);
+    const b = minutes(w.conventionalTo);
+    if (a < b) segs.push([a, b]);
+    else if (a > b) segs.push([0, b], [a, 1440]);
+    else segs.push([0, 1440]);
+  });
+  segs.sort((x, y) => x[0] - y[0]);
+  const parts = [];
+  let cur = 0;
+  segs.forEach(([a, b]) => {
+    if (a > cur) parts.push(['AUTO', cur, a]);
+    parts.push(['CONV', Math.max(a, cur), b]);
+    cur = Math.max(cur, b);
+  });
+  if (cur < 1440) parts.push(['AUTO', cur, 1440]);
+  const nowPct = ((now.getHours() * 60 + now.getMinutes()) / 1440) * 100;
   return (
     <div style={{ marginTop: 22 }}>
       <div className="row between muted num" style={{ fontSize: 12 }}>
         {['00:00', '03:00', '06:00', '09:00', '12:00', '15:00', '18:00', '21:00', '24:00'].map((h) => <span key={h}>{h}</span>)}
       </div>
-      <div style={{ position: 'relative', marginTop: 8, height: 30, borderRadius: 7, overflow: 'visible', display: 'flex' }}>
-        <div style={{ width: '25%', background: 'var(--navy-700)', borderRadius: '7px 0 0 7px', color: '#fff', display: 'grid', placeItems: 'center', fontSize: 13, fontWeight: 600 }}>Autonome</div>
-        <div style={{ width: '66.67%', background: 'var(--primary)', color: '#fff', display: 'grid', placeItems: 'center', fontSize: 13, fontWeight: 600 }}>Conventionnel</div>
-        <div style={{ flex: 1, background: 'var(--navy-700)', borderRadius: '0 7px 7px 0' }} />
-        <div style={{ position: 'absolute', left: `${now}%`, top: -8, bottom: -8, width: 2, background: 'var(--red-500)' }} />
-        <div className="num" style={{ position: 'absolute', left: `${now}%`, top: 40, transform: 'translateX(-50%)', color: 'var(--red)', fontSize: 12, fontWeight: 600 }}>18:42</div>
+      <div style={{ position: 'relative', marginTop: 8, height: 30, borderRadius: 7, display: 'flex', overflow: 'visible' }}>
+        {parts.map(([kind, a, b], i) => {
+          const w = ((b - a) / 1440) * 100;
+          return (
+            <div
+              key={i}
+              style={{
+                width: `${w}%`, background: kind === 'CONV' ? 'var(--primary)' : 'var(--navy-700)', color: '#fff',
+                display: 'grid', placeItems: 'center', fontSize: 13, fontWeight: 600, overflow: 'hidden', whiteSpace: 'nowrap',
+                borderRadius: `${i === 0 ? 7 : 0}px ${i === parts.length - 1 ? 7 : 0}px ${i === parts.length - 1 ? 7 : 0}px ${i === 0 ? 7 : 0}px`,
+              }}
+            >
+              {w > 14 ? (kind === 'CONV' ? 'Conventionnel' : 'Autonome') : ''}
+            </div>
+          );
+        })}
+        <div style={{ position: 'absolute', left: `${nowPct}%`, top: -8, bottom: -8, width: 2, background: 'var(--red-500)' }} />
+        <div className="num" style={{ position: 'absolute', left: `${nowPct}%`, top: 40, transform: 'translateX(-50%)', color: 'var(--red)', fontSize: 12, fontWeight: 600 }}>
+          {time(now)}
+        </div>
       </div>
     </div>
   );
 }
 
+function WindowModal({ stationId, window: w, onClose, onSaved }) {
+  const notify = useToast();
+  const [f, setF] = useState({
+    label: w?.label || '',
+    days: w?.days || [1, 2, 3, 4, 5],
+    holidays: !!w?.holidays,
+    conventionalFrom: hhmm(w?.conventionalFrom || '06:00'),
+    conventionalTo: hhmm(w?.conventionalTo || '22:00'),
+  });
+  const toggleDay = (d) => setF((x) => ({ ...x, days: x.days.includes(d) ? x.days.filter((y) => y !== d) : [...x.days, d].sort() }));
+  return (
+    <FormModal
+      title={w ? 'Modifier la plage horaire' : 'Nouvelle plage horaire'}
+      onClose={onClose}
+      onSubmit={async () => {
+        const body = { ...f, conventionalFrom: `${f.conventionalFrom}:00`, conventionalTo: `${f.conventionalTo}:00` };
+        if (w) await put(`/stations/${stationId}/windows/${w.id}`, body);
+        else await post(`/stations/${stationId}/windows`, body);
+        notify('Plage horaire enregistrée');
+        onSaved();
+      }}
+    >
+      <div className="form-grid">
+        <Field label="Libellé" full><TextInput value={f.label} onChange={(v) => setF({ ...f, label: v })} required placeholder="Lundi – Vendredi" /></Field>
+        <Field label="Jours" full>
+          <div className="row" style={{ gap: 8 }}>
+            {DAY_LETTERS.map((l, i) => (
+              <button type="button" key={i} onClick={() => toggleDay(i + 1)}
+                style={{ width: 38, height: 34, borderRadius: 7, border: 0, fontWeight: 600,
+                  background: f.days.includes(i + 1) ? 'var(--primary)' : 'var(--chip)', color: f.days.includes(i + 1) ? '#fff' : 'var(--muted-2)' }}>
+                {l}
+              </button>
+            ))}
+            <label className="row" style={{ gap: 8, marginLeft: 12 }}>
+              <input type="checkbox" checked={f.holidays} onChange={(e) => setF({ ...f, holidays: e.target.checked })} /> Jours fériés
+            </label>
+          </div>
+        </Field>
+        <Field label="Conventionnel de"><TextInput type="time" value={f.conventionalFrom} onChange={(v) => setF({ ...f, conventionalFrom: v })} required /></Field>
+        <Field label="à"><TextInput type="time" value={f.conventionalTo} onChange={(v) => setF({ ...f, conventionalTo: v })} required /></Field>
+      </div>
+      <div className="muted" style={{ fontSize: 13, marginTop: 12 }}>En dehors de cette plage, la station passe en mode autonome (paiement par carte uniquement).</div>
+    </FormModal>
+  );
+}
+
+function PumpModal({ stationId, pump, onClose, onSaved }) {
+  const notify = useToast();
+  const [state, setState] = useState(pump.state === 'DISTRIBUE' ? 'LIBRE' : pump.state);
+  return (
+    <FormModal
+      title={`Pistolet ${pump.code} · ${pump.port}`}
+      onClose={onClose}
+      submitLabel="Enregistrer"
+      onSubmit={async () => {
+        await put(`/stations/${stationId}/pumps/${pump.id}`, { code: pump.code, port: pump.port, productCode: pump.productCode, state });
+        notify(`Pistolet ${pump.code} : ${PUMP_STATE[state].toLowerCase()}`);
+        onSaved();
+      }}
+    >
+      <Field label="État">
+        <SelectInput value={state} onChange={setState} options={[{ value: 'LIBRE', label: 'En service' }, { value: 'HORS_SERVICE', label: 'Hors service' }]} />
+      </Field>
+      <div className="muted" style={{ marginTop: 12, fontSize: 13 }}>{pump.productName} · index {num(pump.indexTotal, 1)} L</div>
+    </FormModal>
+  );
+}
+
 export default function StationDetail() {
   const { id } = useParams();
-  const station = stationById(id);
-  const [mode, setMode] = useState('Conventionnel');
+  const navigate = useNavigate();
+  const notify = useToast();
+  const { can } = useSession();
+  const st = useApi(`/stations/${id}`);
+  const [modal, setModal] = useState(null);
+  const [, tick] = useState(0);
+  useLiveReload(st.reload, ['sale', 'station', 'shift', 'alert'], 3000);
+  useInterval(() => tick((n) => n + 1), 5000);
+  // état des pistolets mis à jour immédiatement par le flux temps réel
+  useLiveEvent(['pump'], (_, e) => {
+    if (!st.data || e?.stationId !== st.data.id) return;
+    st.setData({
+      ...st.data,
+      lastSeenAt: new Date().toISOString(),
+      pumps: st.data.pumps.map((p) => (p.id === e.pumpId ? { ...p, state: e.state, currentVolume: e.currentVolume } : p)),
+    });
+  });
+
+  const exploit = can('STATION_EXPLOITER');
+  const switchMode = async (mode) => {
+    if (!exploit || st.data.mode === mode) return;
+    try {
+      await post(`/stations/${id}/mode`, { mode });
+      notify(`Station en mode ${mode === 'AUTONOME' ? 'autonome' : 'conventionnel'} (bascule manuelle)`);
+      st.reload();
+    } catch (e) {
+      notify(e.message, 'error');
+    }
+  };
+  const setAuto = async (enabled) => {
+    try {
+      await put(`/stations/${id}/auto-switch`, { enabled });
+      notify(enabled ? 'Bascule automatique activée' : 'Bascule automatique désactivée');
+      st.reload();
+    } catch (e) {
+      notify(e.message, 'error');
+    }
+  };
+  const removeWindow = async (w) => {
+    try {
+      await del(`/stations/${id}/windows/${w.id}`);
+      notify('Plage supprimée');
+      st.reload();
+    } catch (e) {
+      notify(e.message, 'error');
+    }
+  };
+  const openReport = async () => {
+    try {
+      await post(`/reports/daily/generate?stationId=${id}`);
+      navigate(`/rapports?station=${id}&day=${isoDay()}`);
+    } catch (e) {
+      notify(e.message, 'error');
+    }
+  };
 
   return (
-    <>
-      <PageHeader
-        breadcrumb={
-          <div className="breadcrumb">
-            <Link to="/stations">Stations</Link> <ChevronRight size={14} /> <span className="cur">{station.short}</span>
-          </div>
-        }
-        title={station.name}
-        tags={
+    <Async state={st} minHeight={400}>
+      {(s) => {
+        const autonomous = s.mode === 'AUTONOME';
+        const bars = hourlyBars(s.litersByHour);
+        const low = (s.tanks || []).filter((t) => t.belowThreshold);
+        const tankAlert = (s.alerts || []).find((a) => a.tankId);
+        const shift = s.team?.find((m) => m.shiftName);
+        return (
           <>
-            <StatusBadge status={station.status} />
-            <Badge tone="blue">{station.type}</Badge>
-            <Badge tone="gray">Mode {mode.toLowerCase()}</Badge>
-            <span className="row muted" style={{ gap: 6, marginLeft: 6 }}><MapPin size={15} /> Agoè, Grand Lomé · Togo</span>
-          </>
-        }
-        actions={
-          <>
-            <Button icon={ArrowLeftRight} onClick={() => setMode(mode === 'Autonome' ? 'Conventionnel' : 'Autonome')}>
-              Basculer en {mode === 'Autonome' ? 'conventionnel' : 'autonome'}
-            </Button>
-            <Button icon={Pencil}>Modifier</Button>
-            <Button variant="primary" icon={FileText}>Rapport du jour</Button>
-          </>
-        }
-      />
-
-      <div className="grid" style={{ gridTemplateColumns: 'minmax(0, 1fr) 360px', alignItems: 'start' }}>
-        <div className="stack">
-          {/* Mode de fonctionnement */}
-          <Card className="card-pad">
-            <div className="row between">
-              <div className="card-title">Mode de fonctionnement</div>
-              <Button size="sm" icon={Plus}>Ajouter une plage</Button>
-            </div>
-            <div className="row" style={{ gap: 14, marginTop: 18 }}>
-              <ModeOption active={mode === 'Conventionnel'} icon={Users} title="Conventionnel" sub="Pompiste présent, ventes à la pompe" onClick={() => setMode('Conventionnel')} />
-              <ModeOption active={mode === 'Autonome'} icon={CreditCard} title="Autonome" sub="Libre-service, permissions des cartes" onClick={() => setMode('Autonome')} />
-            </div>
-            <Timeline />
-            <div className="row" style={{ gap: 16, background: 'var(--surface-2)', borderRadius: 10, padding: '14px 18px', marginTop: 34 }}>
-              <Toggle />
-              <div>
-                <div className="strong">Bascule automatique selon les plages horaires</div>
-                <div className="muted" style={{ fontSize: 13, marginTop: 2 }}>Prochaine bascule : autonome à 22:00 · bascule manuelle possible à tout moment</div>
-              </div>
-            </div>
-            <div style={{ marginTop: 6 }}>
-              {SCHEDULE.map(([d, conv, auto]) => (
-                <div key={d} className="row" style={{ padding: '13px 0', borderBottom: '1px solid var(--border-2)' }}>
-                  <span className="strong" style={{ width: 220 }}>{d}</span>
-                  <Badge tone="blue" className="num"><Users size={13} /> {conv}</Badge>
-                  <Badge tone="blue" className="num"><CreditCard size={13} /> {auto}</Badge>
-                  <button className="link-more" style={{ marginLeft: 'auto' }}><Pencil size={16} /></button>
+            <PageHeader
+              breadcrumb={
+                <div className="breadcrumb">
+                  <Link to="/stations">Stations</Link> <ChevronRight size={14} /> <span className="cur">{s.shortName}</span>
                 </div>
-              ))}
-            </div>
-          </Card>
+              }
+              title={s.name}
+              tags={
+                <>
+                  <StatusBadge status={s.statusLabel} />
+                  <Badge tone="blue">{s.typeLabel}</Badge>
+                  <Badge tone="gray">Mode {s.modeLabel.toLowerCase()}</Badge>
+                  {s.kind === 'MOBILE' && <Badge tone="purple">Station mobile</Badge>}
+                  <span className="row muted" style={{ gap: 6, marginLeft: 6 }}><MapPin size={15} /> {s.address || s.zone} · {s.country}</span>
+                </>
+              }
+              actions={
+                <>
+                  {exploit && (
+                    <Button icon={ArrowLeftRight} onClick={() => switchMode(autonomous ? 'CONVENTIONNEL' : 'AUTONOME')}>
+                      Basculer en {autonomous ? 'conventionnel' : 'autonome'}
+                    </Button>
+                  )}
+                  {can('STATIONS_GERER') && <Button icon={Pencil} onClick={() => setModal({ type: 'edit' })}>Modifier</Button>}
+                  {can('RAPPORTS') && <Button variant="primary" icon={FileText} onClick={openReport}>Rapport du jour</Button>}
+                </>
+              }
+            />
 
-          {/* Hub & pistolets */}
-          <Card className="card-pad">
-            <div className="row between" style={{ alignItems: 'flex-start' }}>
-              <div>
-                <div className="card-title">Hub & pistolets</div>
-                <div className="card-sub">Un appareil par port</div>
-              </div>
-              <span className="muted" style={{ fontSize: 13 }}>Flux binaire lu par le PC station · il y a 2 s</span>
-            </div>
-            <div className="grid g4" style={{ gap: 12, marginTop: 18 }}>
-              {PUMPS.map((p) => {
-                const active = p.state === 'Distribue';
-                const down = p.state === 'Hors service';
-                return (
-                  <div
-                    key={p.p}
-                    style={{
-                      borderRadius: 10, padding: '14px 14px 12px',
-                      border: active ? '1.5px solid var(--primary)' : down ? '1px solid #f3b4b4' : '1px solid var(--border)',
-                      background: active ? '#f7faff' : '#fff',
-                    }}
-                  >
-                    <div className="row between">
-                      <span><span className="strong">{p.p}</span> <span className="muted">{p.com}</span></span>
-                      <Fuel size={17} color={active ? 'var(--primary)' : down ? 'var(--red)' : 'var(--muted-2)'} />
-                    </div>
-                    <div style={{ marginTop: 10, color: 'var(--text-2)' }}>{p.fuel}</div>
-                    <div className="row between" style={{ marginTop: 10 }}>
-                      <Badge tone={active ? 'blue' : down ? 'red' : 'gray'}>{p.state}</Badge>
-                      {p.l && <span className="strong num">{p.l}</span>}
+            <div className="grid" style={{ gridTemplateColumns: 'minmax(0, 1fr) 360px', alignItems: 'start' }}>
+              <div className="stack">
+                <Card className="card-pad">
+                  <div className="row between">
+                    <div className="card-title">Mode de fonctionnement</div>
+                    {exploit && <Button size="sm" icon={Plus} onClick={() => setModal({ type: 'window' })}>Ajouter une plage</Button>}
+                  </div>
+                  <div className="row" style={{ gap: 14, marginTop: 18 }}>
+                    <ModeOption active={!autonomous} icon={Users} title="Conventionnel" sub="Pompiste présent, ventes à la pompe"
+                      onClick={() => switchMode('CONVENTIONNEL')} disabled={!exploit} />
+                    <ModeOption active={autonomous} icon={CreditCard} title="Autonome" sub="Libre-service, permissions des cartes"
+                      onClick={() => switchMode('AUTONOME')} disabled={!exploit} />
+                  </div>
+                  <Timeline windows={s.windows || []} />
+                  <div className="row" style={{ gap: 16, background: 'var(--surface-2)', borderRadius: 10, padding: '14px 18px', marginTop: 34 }}>
+                    <Toggle on={s.autoSwitch} onChange={setAuto} disabled={!exploit} />
+                    <div>
+                      <div className="strong">Bascule automatique selon les plages horaires</div>
+                      <div className="muted" style={{ fontSize: 13, marginTop: 2 }}>
+                        {s.autoSwitch && s.nextSwitchAt
+                          ? `Prochaine bascule : ${s.nextSwitchMode === 'AUTONOME' ? 'autonome' : 'conventionnel'} à ${time(s.nextSwitchAt)}`
+                          : 'Bascule automatique désactivée'}
+                        {s.modeOverrideUntil ? ` · bascule manuelle jusqu’à ${time(s.modeOverrideUntil)}` : ' · bascule manuelle possible à tout moment'}
+                      </div>
                     </div>
                   </div>
-                );
-              })}
-            </div>
-            <div className="grid g3" style={{ gap: 12, marginTop: 14 }}>
-              {[
-                [Cpu, 'Hub', '12 ports · 10 utilisés'],
-                [CreditCard, 'Lecteur de cartes', 'COM9 · connecté'],
-                [Cable, 'Port série', 'COM12 · 9600 bauds'],
-              ].map(([Icon, l, v]) => (
-                <div key={l} className="row" style={{ gap: 14, border: '1px solid var(--border)', borderRadius: 10, padding: '12px 16px' }}>
-                  <Icon size={20} color="var(--primary)" strokeWidth={1.7} />
-                  <div>
-                    <div className="muted" style={{ fontSize: 12.5 }}>{l}</div>
-                    <div className="strong">{v}</div>
+                  <div style={{ marginTop: 6 }}>
+                    {(s.windows || []).length === 0 && <Empty>Aucune plage : le mode ne change que manuellement</Empty>}
+                    {(s.windows || []).map((w) => (
+                      <div key={w.id} className="row" style={{ padding: '13px 0', borderBottom: '1px solid var(--border-2)' }}>
+                        <span className="strong" style={{ width: 220 }}>{w.label}{w.holidays && !/férié/i.test(w.label) ? ' · fériés' : ''}</span>
+                        <Badge tone="blue" className="num"><Users size={13} /> {hhmm(w.conventionalFrom)} → {hhmm(w.conventionalTo)}</Badge>
+                        <Badge tone="blue" className="num" style={{ marginLeft: 8 }}><CreditCard size={13} /> {hhmm(w.conventionalTo)} → {hhmm(w.conventionalFrom)}</Badge>
+                        {exploit && (
+                          <span className="row" style={{ marginLeft: 'auto', gap: 4 }}>
+                            <button className="link-more" title="Modifier" onClick={() => setModal({ type: 'window', window: w })}><Pencil size={16} /></button>
+                            <button className="link-more" title="Supprimer" onClick={() => removeWindow(w)}><Trash2 size={16} /></button>
+                          </span>
+                        )}
+                      </div>
+                    ))}
                   </div>
-                </div>
-              ))}
-            </div>
-          </Card>
+                </Card>
 
-          {/* Activité */}
-          <Card className="card-pad">
-            <div className="card-title">Activité du jour</div>
-            <div className="card-sub">Litres distribués par heure</div>
-            <div className="row" style={{ gap: 40, marginTop: 20, alignItems: 'flex-end' }}>
-              {[['Volume du jour', '4 182 L'], ['Recette', '2 845 600 F'], ['Transactions', '214']].map(([l, v]) => (
-                <div key={l}>
-                  <div className="muted" style={{ fontSize: 13 }}>{l}</div>
-                  <div className="num" style={{ fontSize: 21, fontWeight: 700, marginTop: 4 }}>{v}</div>
-                </div>
-              ))}
-              <div className="row" style={{ marginLeft: 'auto', gap: 16 }}>
-                <span className="legend"><i style={{ background: '#1b66b8' }} /> Super</span>
-                <span className="legend"><i style={{ background: '#8cc63f' }} /> Gasoil</span>
+                <Card className="card-pad">
+                  <div className="row between" style={{ alignItems: 'flex-start' }}>
+                    <div>
+                      <div className="card-title">Hub & pistolets</div>
+                      <div className="card-sub">Un appareil par port{exploit ? ' · cliquez sur un pistolet pour le mettre hors service' : ''}</div>
+                    </div>
+                    <span className="muted" style={{ fontSize: 13 }}>Flux binaire lu par le PC station · {s.lastSeenAt ? ago(s.lastSeenAt) : 'jamais'}</span>
+                  </div>
+                  <div className="grid g4" style={{ gap: 12, marginTop: 18 }}>
+                    {(s.pumps || []).map((p) => {
+                      const active = p.state === 'DISTRIBUE';
+                      const down = p.state === 'HORS_SERVICE';
+                      return (
+                        <div
+                          key={p.id}
+                          className={exploit ? 'tr-click' : ''}
+                          onClick={() => exploit && setModal({ type: 'pump', pump: p })}
+                          style={{
+                            borderRadius: 10, padding: '14px 14px 12px', transition: 'all .2s',
+                            border: active ? '1.5px solid var(--primary)' : down ? '1px solid #f3b4b4' : '1px solid var(--border)',
+                            background: active ? '#f7faff' : '#fff',
+                          }}
+                        >
+                          <div className="row between">
+                            <span><span className="strong">{p.code}</span> <span className="muted">{p.port}</span></span>
+                            <Fuel size={17} color={active ? 'var(--primary)' : down ? 'var(--red)' : 'var(--muted-2)'} />
+                          </div>
+                          <div style={{ marginTop: 10, color: 'var(--text-2)' }}>{p.productName}</div>
+                          <div className="row between" style={{ marginTop: 10 }}>
+                            <Badge tone={active ? 'blue' : down ? 'red' : 'gray'}>{PUMP_STATE[p.state]}</Badge>
+                            {active && p.currentVolume != null && <span className="strong num">{num(p.currentVolume, 1)} L</span>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="grid g3" style={{ gap: 12, marginTop: 14 }}>
+                    {[
+                      [Cpu, 'Hub', `${s.hubPorts} ports · ${s.hubPortsUsed} utilisés`],
+                      [CreditCard, 'Lecteur de cartes', `${s.readerPort || '—'} · ${s.readerConnected ? 'connecté' : 'déconnecté'}`],
+                      [Cable, 'Port série', `${s.serialPort || '—'}${s.serialBaud ? ` · ${s.serialBaud} bauds` : ''}`],
+                    ].map(([Icon, l, v]) => (
+                      <div key={l} className="row" style={{ gap: 14, border: '1px solid var(--border)', borderRadius: 10, padding: '12px 16px' }}>
+                        <Icon size={20} color={l.startsWith('Lecteur') && !s.readerConnected ? 'var(--red)' : 'var(--primary)'} strokeWidth={1.7} />
+                        <div>
+                          <div className="muted" style={{ fontSize: 12.5 }}>{l}</div>
+                          <div className="strong">{v}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+
+                <Card className="card-pad">
+                  <div className="card-title">Activité du jour</div>
+                  <div className="card-sub">Litres distribués par tranche de deux heures</div>
+                  <div className="row" style={{ gap: 40, marginTop: 20, alignItems: 'flex-end' }}>
+                    {[['Volume du jour', liters(s.today.volume)], ['Recette', `${fcfa(s.today.revenue)} F`], ['Transactions', num(s.today.transactions)]].map(([l, v]) => (
+                      <div key={l}>
+                        <div className="muted" style={{ fontSize: 13 }}>{l}</div>
+                        <div className="num" style={{ fontSize: 21, fontWeight: 700, marginTop: 4 }}>{v}</div>
+                      </div>
+                    ))}
+                    <div className="row" style={{ marginLeft: 'auto', gap: 16 }}>
+                      <span className="legend"><i style={{ background: '#1b66b8' }} /> Super</span>
+                      <span className="legend"><i style={{ background: '#8cc63f' }} /> Gasoil</span>
+                    </div>
+                  </div>
+                  <div style={{ marginTop: 24 }}>
+                    <GroupedBars data={bars.data} labels={bars.labels} height={190} />
+                  </div>
+                </Card>
+              </div>
+
+              <div className="stack">
+                <Card className="card-pad">
+                  <div className="row between">
+                    <div>
+                      <div className="card-title">Cuves</div>
+                      <div className="card-sub">- - - seuil ajusté automatiquement</div>
+                    </div>
+                    <Sparkles size={17} color="var(--muted)" />
+                  </div>
+                  <div className="grid g3" style={{ gap: 10, marginTop: 18 }}>
+                    {(s.tanks || []).map((t) => (
+                      <div key={t.id} style={{ textAlign: 'center' }}>
+                        <div style={{ position: 'relative', height: 150, borderRadius: 10, background: '#eef2f6', overflow: 'hidden', border: '1px solid var(--border)' }}>
+                          <div className="num" style={{ position: 'absolute', top: 12, left: 0, right: 0, fontSize: 18, fontWeight: 700, zIndex: 2 }}>{num(t.pct)} %</div>
+                          <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: `${t.pct}%`, background: t.belowThreshold ? '#e5575c' : TANK_COLORS[t.productCode] }} />
+                          {t.threshold != null && (
+                            <div style={{ position: 'absolute', left: 0, right: 0, bottom: `${Math.min(100, t.thresholdPct)}%`, borderTop: '1.5px dashed rgba(15,23,42,.45)' }} />
+                          )}
+                        </div>
+                        <div className="strong" style={{ marginTop: 10 }}>{t.productName}</div>
+                        <div className="muted num" style={{ fontSize: 12, marginTop: 2 }}>{num(t.volume)} / {num(t.capacity)} L</div>
+                      </div>
+                    ))}
+                  </div>
+                  {low.map((t) => (
+                    <div key={t.id} className="alert-box red" style={{ marginTop: 16 }}>
+                      <TriangleAlert size={18} style={{ flexShrink: 0, marginTop: 1 }} />
+                      <span>
+                        <b>{t.productName} sous le seuil {t.thresholdManual ? 'manuel' : 'auto'} ({num(t.threshold)} L).</b>
+                        {t.trendPct != null ? ` Tendance ${t.trendPct > 0 ? '+' : ''}${num(t.trendPct, 1)} % sur 7 jours` : ''}
+                        {tankAlert?.emailedAt ? `, email envoyé au gérant à ${time(tankAlert.emailedAt)}.` : '.'}
+                      </span>
+                    </div>
+                  ))}
+                </Card>
+
+                <Card className="card-pad">
+                  <div className="row between">
+                    <div className="card-title">Informations</div>
+                    {can('STATIONS_GERER') && <button className="link-more" onClick={() => setModal({ type: 'edit' })}><Pencil size={16} /></button>}
+                  </div>
+                  <div style={{ marginTop: 8 }}>
+                    <KV k="Code" v={s.code} />
+                    <KV k="Client" v={s.clientName || '—'} />
+                    <KV k="Type" v={s.typeLabel} />
+                    <KV k="Ouverture" v={longDate(s.openedOn)} />
+                    <KV k="Coordonnées" v={s.latitude != null ? `${Number(s.latitude).toFixed(4)}° N · ${Number(s.longitude).toFixed(4)}° E` : '—'} />
+                    <KV k="Pays" v={s.country} />
+                    <KV k="Gérant" v={s.managerName || '—'} />
+                    <KV k="Licence" v={`${s.licenceStatus}${s.licenceEnd ? ` · ${date(s.licenceEnd)}` : ''}`} />
+                  </div>
+                </Card>
+
+                <Card className="card-pad">
+                  <div className="row between">
+                    <div className="card-title">Équipe en poste</div>
+                    <span className="muted" style={{ fontSize: 13 }}>
+                      {shift ? `Poste ${shift.shiftName.toLowerCase()} ${hhmm(shift.startTime)}–${hhmm(shift.endTime)}` : ''}
+                    </span>
+                  </div>
+                  <div style={{ marginTop: 8 }}>
+                    {(s.team || []).length === 0 && <Empty>Personne en poste</Empty>}
+                    {(s.team || []).map((m) => (
+                      <div key={m.id} className="list-item" style={{ borderBottom: 0, padding: '10px 0' }}>
+                        <Avatar initials={m.initials} color={avatarColor(m.id)} size={38} />
+                        <div style={{ flex: 1 }}>
+                          <div className="strong">{m.name}</div>
+                          <div className="muted" style={{ fontSize: 13 }}>{m.role}{m.pumps ? ` · ${m.pumps.split(', ').length} pistolets` : ''} · depuis {time(m.startedAt)}</div>
+                        </div>
+                        <StatusBadge status={m.status === 'PAUSE' ? 'Pause' : 'En poste'} />
+                      </div>
+                    ))}
+                  </div>
+                </Card>
               </div>
             </div>
-            <div style={{ marginTop: 24 }}>
-              <GroupedBars data={ACTIVITY} labels={['6h', '8h', '10h', '12h', '14h', '16h', '18h', '20h', '22h']} height={190} />
-            </div>
-          </Card>
-        </div>
 
-        {/* Colonne droite */}
-        <div className="stack">
-          <Card className="card-pad">
-            <div className="row between">
-              <div>
-                <div className="card-title">Cuves</div>
-                <div className="card-sub">- - - seuil ajusté automatiquement</div>
-              </div>
-              <Sparkles size={17} color="var(--muted)" />
-            </div>
-            <div className="grid g3" style={{ gap: 10, marginTop: 18 }}>
-              {TANKS.map((t) => (
-                <div key={t.name} style={{ textAlign: 'center' }}>
-                  <div style={{ position: 'relative', height: 150, borderRadius: 10, background: '#eef2f6', overflow: 'hidden', border: '1px solid var(--border)' }}>
-                    <div className="num" style={{ position: 'absolute', top: 12, left: 0, right: 0, fontSize: 18, fontWeight: 700, zIndex: 2 }}>{t.pct} %</div>
-                    <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: `${t.pct}%`, background: t.color }} />
-                    <div style={{ position: 'absolute', left: 0, right: 0, bottom: `${t.threshold}%`, borderTop: '1.5px dashed rgba(15,23,42,.45)' }} />
-                  </div>
-                  <div className="strong" style={{ marginTop: 10 }}>{t.name}</div>
-                  <div className="muted num" style={{ fontSize: 12, marginTop: 2 }}>{t.vol}</div>
-                </div>
-              ))}
-            </div>
-            <div className="alert-box red" style={{ marginTop: 16 }}>
-              <TriangleAlert size={18} style={{ flexShrink: 0, marginTop: 1 }} />
-              <span><b>Gasoil sous le seuil auto (8 400 L).</b> Tendance +9 % sur 7 jours, email envoyé au gérant à 18:31.</span>
-            </div>
-          </Card>
-
-          <Card className="card-pad">
-            <div className="row between">
-              <div className="card-title">Informations</div>
-              <button className="link-more"><Pencil size={16} /></button>
-            </div>
-            <div style={{ marginTop: 8 }}>
-              <KV k="Client" v={station.client} />
-              <KV k="Type" v={station.type} />
-              <KV k="Création" v="14 mars 2019" />
-              <KV k="Coordonnées" v="6.2350° N · 1.2050° E" />
-              <KV k="Pays" v="Togo" />
-              <KV k="Gérant" v="Kossi Amegah" />
-              <KV k="Licence" v="Active · 31/12/2026" />
-            </div>
-          </Card>
-
-          <Card className="card-pad">
-            <div className="row between">
-              <div className="card-title">Équipe en poste</div>
-              <span className="muted" style={{ fontSize: 13 }}>Poste 14h–22h</span>
-            </div>
-            <div style={{ marginTop: 8 }}>
-              {TEAM.map((m) => (
-                <div key={m.n} className="list-item" style={{ borderBottom: 0, padding: '10px 0' }}>
-                  <Avatar initials={m.i} color={m.c} size={38} />
-                  <div style={{ flex: 1 }}>
-                    <div className="strong">{m.n}</div>
-                    <div className="muted" style={{ fontSize: 13 }}>{m.r}</div>
-                  </div>
-                  <StatusBadge status={m.s} />
-                </div>
-              ))}
-            </div>
-          </Card>
-        </div>
-      </div>
-    </>
+            {modal?.type === 'edit' && <StationFormModal station={s} onClose={() => setModal(null)} onSaved={st.reload} />}
+            {modal?.type === 'window' && <WindowModal stationId={s.id} window={modal.window} onClose={() => setModal(null)} onSaved={st.reload} />}
+            {modal?.type === 'pump' && <PumpModal stationId={s.id} pump={modal.pump} onClose={() => setModal(null)} onSaved={st.reload} />}
+          </>
+        );
+      }}
+    </Async>
   );
 }

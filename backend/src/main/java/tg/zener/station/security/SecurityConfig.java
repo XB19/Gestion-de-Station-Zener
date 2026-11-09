@@ -29,7 +29,7 @@ public class SecurityConfig {
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .exceptionHandling(e -> e.authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
                 .authorizeHttpRequests(a -> a
-                        .requestMatchers("/api/auth/login", "/api/health").permitAll()
+                        .requestMatchers("/api/auth/login", "/api/health", "/api/public/**").permitAll()
                         // PC station : authentifié par sa clé (en-têtes X-Station-Code / X-Station-Key)
                         .requestMatchers("/api/hub/**").permitAll()
                         // photos des employés : noms de fichiers aléatoires

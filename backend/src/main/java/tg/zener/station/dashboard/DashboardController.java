@@ -33,8 +33,11 @@ public class DashboardController {
     private final Db db;
     private final StationController stations;
     private final ZoneId zone;
+    private final tg.zener.station.common.Settings settings;
 
-    public DashboardController(Db db, StationController stations, @Value("${app.timezone}") String zone) {
+    public DashboardController(Db db, StationController stations, @Value("${app.timezone}") String zone,
+                               tg.zener.station.common.Settings settings) {
+        this.settings = settings;
         this.db = db;
         this.stations = stations;
         this.zone = ZoneId.of(zone);
@@ -62,7 +65,8 @@ public class DashboardController {
         Long scope = Auth.scopedStation(null);
         LocalDateTime now = ZonedDateTime.now(zone).toLocalDateTime();
         Range r = range(period, now);
-        Map<String, Object> p = Db.p("s", scope, "f", r.from(), "t", r.to(), "pf", r.prevFrom(), "pt", r.prevTo());
+        Map<String, Object> p = Db.p("s", scope, "f", r.from(), "t", r.to(), "pf", r.prevFrom(), "pt", r.prevTo(),
+                "offline", settings.getLong("pdv.offline_seconds", 300));
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("period", period == null ? "JOUR" : period.toUpperCase());
         out.put("from", r.from());
@@ -144,6 +148,9 @@ public class DashboardController {
         out.put("stationStates", list.subList(0, Math.min(list.size(), 8)));
         out.put("pdv", scope != null ? List.of() : db.list("""
                 \sSELECT p.id, p.code, p.name, p.kind, p.status, p.end_date, p.last_sync_at,
+                       CASE WHEN p.end_date IS NOT NULL THEN p.end_date - current_date END AS days_left,
+                       (p.kind = 'TEMPORAIRE' AND (p.last_sync_at IS NULL
+                            OR p.last_sync_at < now() - make_interval(secs => CAST(:offline AS int)))) AS offline,
                        COALESCE((SELECT sum(total) FROM sale WHERE pdv_id = p.id AND at >= :f AND at < :t), 0) AS amount,
                        (SELECT count(*) FROM pdv_card pc WHERE pc.pdv_id = p.id) AS cards_allocated,
                        (SELECT count(*) FROM pdv_card pc WHERE pc.pdv_id = p.id AND pc.sold_at IS NOT NULL) AS cards_sold,
