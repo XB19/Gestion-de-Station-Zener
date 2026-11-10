@@ -39,7 +39,7 @@ public class ReportController {
     static final String SELECT = """
             \sSELECT r.id, r.station_id, s.name AS station_name, s.short_name AS station_short_name, r.day, r.generated_at,
                    r.status, r.comment, r.comment_at, r.validated_at, r.comment_by,
-                   e.first_name || ' ' || e.last_name AS comment_by_name,
+                   e.first_name || ' ' || e.last_name AS comment_by_name, CASE WHEN e.photo_path IS NULL THEN NULL ELSE '/files/' || e.photo_path END AS comment_by_photo_url,
                    CAST(r.data ->> 'revenue' AS bigint) AS revenue, CAST(r.data ->> 'volume' AS numeric) AS volume,
                    CAST(r.data ->> 'transactions' AS bigint) AS transactions, CAST(r.data ->> 'cashGap' AS bigint) AS cash_gap
             FROM daily_report r JOIN station s ON s.id = r.station_id LEFT JOIN employee e ON e.id = r.comment_by""";

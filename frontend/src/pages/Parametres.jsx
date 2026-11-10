@@ -127,7 +127,7 @@ function Outbox() {
       </div>
       <Async state={emails}>
         {(rows) => (rows.length === 0 ? <Empty>Aucun email</Empty> : (
-          <table className="table">
+          <div className="table-wrap"><table className="table">
             <thead><tr><th>Quand</th><th>Objet</th><th>Destinataires</th><th>État</th></tr></thead>
             <tbody>
               {rows.map((m) => (
@@ -139,7 +139,7 @@ function Outbox() {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
         ))}
       </Async>
       {open && (
@@ -198,7 +198,7 @@ export default function Parametres() {
         </div>
       )}
 
-      <div className="grid" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', alignItems: 'start' }}>
+      <div className="grid split" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', alignItems: 'start' }}>
         <div className="stack">
           {draft && GROUPS.map((g) => (
             <Card key={g.title} className="card-pad">

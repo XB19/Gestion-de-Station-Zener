@@ -116,7 +116,7 @@ public class PdvController {
         Map<String, Object> p = db.require(select() + " WHERE p.id = :id", Db.p("id", id), "Point de vente introuvable");
         p.put("agentsList", db.list("""
                 \sSELECT e.id, e.first_name || ' ' || e.last_name AS name, upper(left(e.first_name, 1) || left(e.last_name, 1)) AS initials,
-                       a.role, e.photo_path,
+                       a.role, CASE WHEN e.photo_path IS NULL THEN NULL ELSE '/files/' || e.photo_path END AS photo_url,
                        (SELECT count(*) FROM sale x WHERE x.pdv_id = a.pdv_id AND x.employee_id = e.id AND x.kind = 'CARTE') AS cards_sold
                 FROM pdv_agent a JOIN employee e ON e.id = a.employee_id
                 WHERE a.pdv_id = :id ORDER BY a.role DESC, cards_sold DESC""", Db.p("id", id)));

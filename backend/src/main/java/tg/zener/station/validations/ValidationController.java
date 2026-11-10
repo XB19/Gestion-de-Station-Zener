@@ -88,6 +88,7 @@ public class ValidationController {
                 \sSELECT st.step_no, st.roles, st.status, st.decided_at, st.comment,
                        e.first_name || ' ' || e.last_name AS decided_by_name,
                        upper(left(e.first_name, 1) || left(e.last_name, 1)) AS initials,
+                       CASE WHEN e.photo_path IS NULL THEN NULL ELSE '/files/' || e.photo_path END AS photo_url,
                        (SELECT string_agg(a.first_name || ' ' || a.last_name, ', ')
                         FROM employee a WHERE a.active AND a.role_code = ANY(st.roles)) AS approvers
                 FROM validation_step st LEFT JOIN employee e ON e.id = st.decided_by

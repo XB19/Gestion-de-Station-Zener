@@ -182,7 +182,7 @@ function Permissions({ card, onSaved, editable }) {
       </div>
 
       <div className="section-label" style={{ marginTop: 16 }}>Produits autorisés</div>
-      <div className="grid" style={{ gridTemplateColumns: 'repeat(6, 1fr)', gap: 10 }}>
+      <div className="grid auto-cols" style={{ gridTemplateColumns: 'repeat(6, 1fr)', gap: 10, '--col': '118px' }}>
         {PRODUCTS.map((p) => {
           const Icon = p.icon;
           const on = f.products.includes(p.code);
@@ -386,7 +386,7 @@ export default function CarteDetail() {
               }
             />
 
-            <div className="grid" style={{ gridTemplateColumns: '350px minmax(0, 1fr)', alignItems: 'start' }}>
+            <div className="grid split" style={{ gridTemplateColumns: '350px minmax(0, 1fr)', alignItems: 'start' }}>
               <div className="stack">
                 <BankCard number={c.numberFormatted} holder={(c.holderName || '').toUpperCase()} exp={expiry(c.expiresOn)} kind={c.typeLabel.toUpperCase()} large />
 
@@ -435,7 +435,7 @@ export default function CarteDetail() {
                   <Async state={ops}>
                     {(data) => (data.items.length === 0 ? <Empty>Aucune opération</Empty> : (
                       <>
-                        <table className="table">
+                        <div className="table-wrap"><table className="table">
                           <thead>
                             <tr><th>Date</th><th>Opération</th><th>Station</th><th className="r">Montant (F)</th><th className="r">Solde</th><th>Détail</th></tr>
                           </thead>
@@ -453,7 +453,7 @@ export default function CarteDetail() {
                               </tr>
                             ))}
                           </tbody>
-                        </table>
+                        </table></div>
                         <Pager data={data} page={page} onPage={setPage} label="opérations" />
                       </>
                     ))}

@@ -72,6 +72,7 @@ public class TrackingController {
         long stale = settings.getLong("mobility.tracking_stale_seconds", 180);
         List<Map<String, Object>> agents = db.list("""
                 \sSELECT e.id, e.first_name || ' ' || e.last_name AS name, e.phone,
+                       CASE WHEN e.photo_path IS NULL THEN NULL ELSE '/files/' || e.photo_path END AS photo_url,
                        lp.latitude, lp.longitude, lp.speed_kmh, lp.heading, lp.accuracy_m, lp.at,
                        CAST(extract(epoch FROM now() - lp.at) AS int) AS age_seconds,
                        d.id AS delivery_id, d.ref AS delivery_ref, d.status AS delivery_status, d.address AS delivery_address,

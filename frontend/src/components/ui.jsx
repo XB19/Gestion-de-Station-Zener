@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Check, ChevronDown, TrendingUp, TrendingDown } from 'lucide-react';
 import { ZenerMark } from './ZenerLogo.jsx';
+import { avatarColor, initials as initialsOf } from '../lib/format.js';
 
 /* ---------- Mise en page de page ---------- */
 export function PageHeader({ title, subtitle, actions, breadcrumb, tags }) {
@@ -284,6 +285,20 @@ export function Avatar({ initials, color = 'blue', size = 36, photo }) {
       style={{ width: size, height: size, fontSize: size * 0.36, background: AVATAR_COLORS[color] || color }}
     >
       {initials}
+    </span>
+  );
+}
+
+/** Personne : photo de profil (ou initiales) suivie du nom, pour les tableaux et listes. */
+export function Person({ name, photo, id, size = 26, sub, strong }) {
+  if (!name) return <span className="muted">—</span>;
+  return (
+    <span className="row" style={{ gap: 8, minWidth: 0 }}>
+      <Avatar initials={initialsOf(name)} color={avatarColor(id ?? name)} size={size} photo={photo} />
+      <span style={{ minWidth: 0 }}>
+        <span className={strong ? 'strong' : undefined} style={{ display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</span>
+        {sub && <span className="muted" style={{ display: 'block', fontSize: 12 }}>{sub}</span>}
+      </span>
     </span>
   );
 }

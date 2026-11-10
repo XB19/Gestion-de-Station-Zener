@@ -152,7 +152,7 @@ function EmployeeSheet({ id, roles, stations, onClose, onChanged }) {
             {(x.shifts || []).length > 0 && (
               <>
                 <div className="section-label" style={{ marginTop: 18 }}>Derniers postes</div>
-                <table className="table">
+                <div className="table-wrap"><table className="table">
                   <thead><tr><th>Début</th><th>Fin</th><th className="r">Espèces attendues</th><th className="r">Remis</th><th className="r">Écart</th></tr></thead>
                   <tbody>
                     {x.shifts.slice(0, 5).map((sh) => (
@@ -165,7 +165,7 @@ function EmployeeSheet({ id, roles, stations, onClose, onChanged }) {
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                </table></div>
               </>
             )}
             {edit && <EmployeeFormModal employee={x} roles={roles} stations={stations} onClose={() => setEdit(false)} onSaved={() => { e.reload(); onChanged(); }} />}
@@ -222,7 +222,7 @@ function RightsMatrix() {
       <Async state={matrix}>
         {(m) => (
           <div style={{ overflowX: 'auto' }}>
-            <table className="table">
+            <div className="table-wrap"><table className="table">
               <thead>
                 <tr><th>Droit</th>{m.roles.map((r) => <th key={r.code} className="c" style={{ padding: '11px 6px' }} title={r.label}>{ROLE_SHORT[r.code] || r.label}</th>)}</tr>
               </thead>
@@ -255,7 +255,7 @@ function RightsMatrix() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </table></div>
           </div>
         )}
       </Async>
@@ -311,17 +311,17 @@ export default function Employes() {
         }
       />
 
-      <div className="grid mb20" style={{ gridTemplateColumns: 'minmax(0, 1fr) 300px' }}>
+      <div className="grid split mb20" style={{ gridTemplateColumns: 'minmax(0, 1fr) 300px' }}>
         <div
           className="row"
           style={{
-            position: 'relative', overflow: 'hidden', borderRadius: 'var(--radius)', color: '#fff', padding: '0 34px', gap: 26, minHeight: 150,
+            position: 'relative', overflow: 'hidden', borderRadius: 'var(--radius)', color: '#fff', padding: '22px 34px', gap: 26, rowGap: 16, minHeight: 150, flexWrap: 'wrap',
             background: 'linear-gradient(110deg, #13306b 0%, #174a92 55%, #1b66b8 100%)',
           }}
         >
           <div style={{ position: 'absolute', right: -40, top: -10, width: 230, height: 230, borderRadius: '50%', border: '24px solid rgba(90,169,53,.45)' }} />
           <div style={{ position: 'absolute', right: -80, top: -50, width: 330, height: 330, borderRadius: '50%', border: '1px solid rgba(255,255,255,.12)' }} />
-          <div style={{ position: 'relative' }}>
+          <div style={{ position: 'relative', flexShrink: 0 }}>
             {w?.photoUrl ? (
               <img src={fileUrl(w.photoUrl)} alt="" style={{ width: 76, height: 76, borderRadius: '50%', objectFit: 'cover', border: '3px solid #fff' }} />
             ) : (
@@ -333,14 +333,14 @@ export default function Employes() {
               <Crown size={13} strokeWidth={2.4} />
             </span>
           </div>
-          <div style={{ position: 'relative', whiteSpace: 'nowrap' }}>
+          <div style={{ position: 'relative', flex: '1 1 220px' }}>
             <div className="row" style={{ gap: 7, fontSize: 13, opacity: 0.85 }}><Trophy size={15} /> Meilleur employé · {month.data?.label || '…'}</div>
             <div style={{ fontSize: 23, fontWeight: 700, marginTop: 6 }}>{w?.name || (month.data ? 'Pas encore de ventes' : '…')}</div>
             <div style={{ fontSize: 14, opacity: 0.8, marginTop: 4 }}>{w ? `${w.roleLabel} · ${w.stationName || 'Siège'}` : ''}</div>
           </div>
-          <div className="row" style={{ marginLeft: 'auto', gap: 12, position: 'relative' }}>
+          <div className="row" style={{ marginLeft: 'auto', gap: 12, position: 'relative', flexWrap: 'wrap' }}>
             {[['Produits vendus', w?.productsSold], ['Litres servis', w?.liters], ['Lubrifiants', w?.lubricants]].map(([l, v]) => (
-              <div key={l} style={{ width: 112, whiteSpace: 'nowrap', border: '1px solid rgba(255,255,255,.22)', background: 'rgba(255,255,255,.1)', borderRadius: 10, padding: '10px 14px' }}>
+              <div key={l} style={{ width: 112, flexShrink: 0, whiteSpace: 'nowrap', border: '1px solid rgba(255,255,255,.22)', background: 'rgba(255,255,255,.1)', borderRadius: 10, padding: '10px 14px' }}>
                 <div style={{ fontSize: 12, opacity: 0.8 }}>{l}</div>
                 <div className="num" style={{ fontSize: 19, fontWeight: 700, marginTop: 2 }}>{v == null ? '—' : num(v)}</div>
               </div>
@@ -354,7 +354,7 @@ export default function Employes() {
         </Card>
       </div>
 
-      <div className="grid" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', alignItems: 'start' }}>
+      <div className="grid split" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', alignItems: 'start' }}>
         <Card className="card-pad">
           <div className="row between" style={{ alignItems: 'flex-start' }}>
             <div>
@@ -375,7 +375,7 @@ export default function Employes() {
           <Async state={list}>
             {(data) => (data.items.length === 0 ? <Empty>Aucun employé</Empty> : (
               <>
-                <div className="grid g3" style={{ gap: 14, marginTop: 18 }}>
+                <div className="grid auto-cols" style={{ gap: 14, marginTop: 18, '--col': '150px' }}>
                   {data.items.map((m) => (
                     <div key={m.id} className="tr-click" onClick={() => setModal({ type: 'sheet', id: m.id })}
                       style={{ position: 'relative', border: '1px solid var(--border)', borderRadius: 12, padding: '18px 14px 14px', textAlign: 'center' }}>

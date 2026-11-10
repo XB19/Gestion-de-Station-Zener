@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Banknote, Droplet, Wifi, ShieldCheck, Download, Plus, Fuel, Clock, ArrowRight, TriangleAlert, Mail } from 'lucide-react';
 import {
-  PageHeader, Card, CardHead, Kpi, Trend, Badge, StatusBadge, Button, Segmented, IcoBox, Progress, Async, Empty,
+  PageHeader, Card, CardHead, Kpi, Trend, Badge, StatusBadge, Button, Segmented, IcoBox, Progress, Async, Empty, Avatar,
 } from '../components/ui.jsx';
+import { fileUrl } from '../api/client.js';
 import { AreaChart, niceScale } from '../components/charts.jsx';
 import { useApi, useInterval, useLiveReload } from '../api/hooks.js';
 import { useLiveEvent } from '../api/live.jsx';
@@ -31,9 +32,19 @@ export function CuveBars({ levels }) {
 export function FeedItem({ op, flash }) {
   const [icon, tone] = operationIcon(op);
   const who = op.actorName && op.actorName !== 'Système' ? shortName(op.actorName) : null;
+  const photo = fileUrl(op.actorPhotoUrl);
   return (
     <div className={`list-item ${flash ? 'flash' : ''}`} style={{ alignItems: 'flex-start' }}>
-      <IcoBox icon={icon} tone={tone} />
+      {photo ? (
+        <span style={{ position: 'relative', flexShrink: 0 }} title={op.actorName}>
+          <Avatar photo={photo} initials={op.actorInitials} size={36} />
+          <span style={{ position: 'absolute', right: -5, bottom: -5, border: '2px solid #fff', borderRadius: 8, display: 'flex' }}>
+            <IcoBox icon={icon} tone={tone} size={19} />
+          </span>
+        </span>
+      ) : (
+        <IcoBox icon={icon} tone={tone} />
+      )}
       <div style={{ flex: 1, minWidth: 0 }}>
         <div className="strong" style={{ fontSize: 14 }}>{op.title}</div>
         <div className="muted" style={{ fontSize: 12.5, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -147,14 +158,14 @@ export default function Dashboard() {
                 />
               </div>
 
-              <div className="grid mb20" style={{ gridTemplateColumns: 'minmax(0, 1fr) 380px' }}>
+              <div className="grid split mb20" style={{ gridTemplateColumns: 'minmax(0, 1fr) 380px' }}>
                 <Card>
                   <CardHead
                     title="Recette en direct"
                     sub="Toutes stations, mise à jour en continu"
                     right={<Segmented items={Object.keys(PERIODS)} value={period} onChange={setPeriod} />}
                   />
-                  <div className="row" style={{ gap: 34, padding: '20px 20px 0', alignItems: 'flex-end' }}>
+                  <div className="row" style={{ gap: 34, rowGap: 14, padding: '20px 20px 0', alignItems: 'flex-end', flexWrap: 'wrap' }}>
                     <div>
                       <div className="muted" style={{ fontSize: 12.5 }}>Cumul à {time(d.generatedAt)}</div>
                       <div className="num" style={{ fontSize: 21, fontWeight: 700, marginTop: 4 }}>
@@ -193,14 +204,14 @@ export default function Dashboard() {
                 </Card>
               </div>
 
-              <div className="grid" style={{ gridTemplateColumns: 'minmax(0, 1fr) 380px', alignItems: 'start' }}>
+              <div className="grid split" style={{ gridTemplateColumns: 'minmax(0, 1fr) 380px', alignItems: 'start' }}>
                 <Card>
                   <CardHead
                     title="État des stations"
                     sub={`${d.stations.online} en ligne · ${offline} hors ligne ou instable`}
                     right={<Button size="sm" iconRight={ArrowRight} onClick={() => navigate('/stations')}>Voir les {d.stations.total} stations</Button>}
                   />
-                  <table className="table" style={{ marginTop: 14 }}>
+                  <div className="table-wrap"><table className="table" style={{ marginTop: 14 }}>
                     <thead>
                       <tr>
                         <th>Station</th><th>Statut</th><th>Mode</th><th className="r">Recette du jour</th><th>Cuves</th><th>État</th>
@@ -226,7 +237,7 @@ export default function Dashboard() {
                         </tr>
                       ))}
                     </tbody>
-                  </table>
+                  </table></div>
                 </Card>
 
                 <div className="stack">

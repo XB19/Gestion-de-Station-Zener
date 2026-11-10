@@ -204,6 +204,7 @@ public class StationController {
                 \sSELECT e.id, e.first_name || ' ' || e.last_name AS name,
                        upper(left(e.first_name, 1) || left(e.last_name, 1)) AS initials,
                        r.label AS role, es.pumps, es.status, es.started_at, sc.name AS shift_name,
+                       CASE WHEN e.photo_path IS NULL THEN NULL ELSE '/files/' || e.photo_path END AS photo_url,
                        sc.start_time, sc.end_time
                 FROM employee_shift es
                 JOIN employee e ON e.id = es.employee_id JOIN role r ON r.code = e.role_code

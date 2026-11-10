@@ -4,7 +4,7 @@ import { Settings, Clock, CircleCheck, CircleX, Timer, X, Check, Download } from
 import { PageHeader, Card, Kpi, Trend, Badge, StatusBadge, Button, Avatar, Async, Empty, Pager, Select } from '../components/ui.jsx';
 import { FormModal, Field, TextInput, useToast } from '../components/feedback.jsx';
 import { useApi, useLiveReload, useInterval } from '../api/hooks.js';
-import { post, put } from '../api/client.js';
+import { fileUrl, post, put } from '../api/client.js';
 import { useSession } from '../api/session.jsx';
 import { ago, avatarColor, dateTime, dayMonth, exportCsv, fcfa, money, num } from '../lib/format.js';
 
@@ -110,7 +110,7 @@ export default function Validations() {
             down={s.avgDelayMinutes < s.avgDelayMinutesPrev} good={s.avgDelayMinutes < s.avgDelayMinutesPrev} /> vs mois dernier</> : 'ce mois'} />
       </div>
 
-      <div className="grid mb20" style={{ gridTemplateColumns: '360px minmax(0, 1fr)', alignItems: 'start' }}>
+      <div className="grid split mb20" style={{ gridTemplateColumns: '360px minmax(0, 1fr)', alignItems: 'start' }}>
         <Card className="card-pad">
           <div className="row between">
             <div className="card-title">Demandes en attente</div>
@@ -197,7 +197,7 @@ export default function Validations() {
                   <div className="grid g2" style={{ gap: 14 }}>
                     {(v.steps || []).map((st) => (
                       <div key={st.stepNo} className="row" style={{ gap: 14, border: '1px solid var(--border)', borderRadius: 10, padding: '14px 16px' }}>
-                        <Avatar initials={st.initials || st.roles.map((r) => (ROLE_LABELS[r] || r)[0]).join('')} color={avatarColor(st.decidedByName || st.roles[0])} size={40} />
+                        <Avatar initials={st.initials || st.roles.map((r) => (ROLE_LABELS[r] || r)[0]).join('')} color={avatarColor(st.decidedByName || st.roles[0])} size={40} photo={fileUrl(st.photoUrl)} />
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div className="muted" style={{ fontSize: 12.5 }}>{st.roles.map((r) => ROLE_LABELS[r] || r).join(' ou ')}</div>
                           <div className="strong">{st.decidedByName || st.approvers}</div>
@@ -246,7 +246,7 @@ export default function Validations() {
         <Async state={history}>
           {(data) => (data.items.length === 0 ? <Empty>Aucune décision</Empty> : (
             <>
-              <table className="table">
+              <div className="table-wrap"><table className="table">
                 <thead>
                   <tr><th>Réf.</th><th>Bénéficiaire</th><th className="r">Montant (F)</th><th>Demandé par</th><th>Validé / refusé par</th><th>Décision</th><th>Quand</th></tr>
                 </thead>
@@ -263,7 +263,7 @@ export default function Validations() {
                     </tr>
                   ))}
                 </tbody>
-              </table>
+              </table></div>
               <Pager data={data} page={page} onPage={setPage} label="demandes" />
             </>
           ))}

@@ -1,56 +1,48 @@
-// Logo ZENER : anneau bleu / vert + mot-symbole
-function arc(cx, cy, r, a0, a1) {
-  const rad = (a) => ((a - 90) * Math.PI) / 180;
-  const x0 = cx + r * Math.cos(rad(a0));
-  const y0 = cy + r * Math.sin(rad(a0));
-  const x1 = cx + r * Math.cos(rad(a1));
-  const y1 = cy + r * Math.sin(rad(a1));
-  const large = a1 - a0 > 180 ? 1 : 0;
-  return `M ${x0} ${y0} A ${r} ${r} 0 ${large} 1 ${x1} ${y1}`;
-}
+// Logo officiel ZENER (fichiers du site zener : anneau bleu / vert et logo complet)
+import logoUrl from '../assets/brand/zener-logo.webp';
+import markUrl from '../assets/brand/zener-mark.webp';
 
+// Logo complet 720 × 516 : l'anneau en haut, le mot « ZENER® » en bas (à partir de y = 330)
+const LOGO_W = 720;
+const LOGO_H = 516;
+const WORD_TOP = 330;
+
+/** Anneau seul. */
 export function ZenerMark({ size = 34 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 40 40" aria-hidden="true">
-      <defs>
-        <linearGradient id="zg-blue" x1="0" y1="1" x2="1" y2="0">
-          <stop offset="0" stopColor="#1b4fa0" />
-          <stop offset="1" stopColor="#1f8fd0" />
-        </linearGradient>
-        <linearGradient id="zg-green" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#2fae4a" />
-          <stop offset="1" stopColor="#a6cf2a" />
-        </linearGradient>
-      </defs>
-      <path d={arc(20, 20, 14, 150, 390)} stroke="url(#zg-blue)" strokeWidth="7.5" fill="none" strokeLinecap="round" />
-      <path d={arc(20, 20, 14, -30, 140)} stroke="url(#zg-green)" strokeWidth="7.5" fill="none" strokeLinecap="round" />
-    </svg>
-  );
+  return <img src={markUrl} width={size} height={size} alt="ZENER" style={{ display: 'block', objectFit: 'contain' }} draggable={false} />;
 }
 
-export function ZenerWordmark({ size = 22, color = '#1b4fa0' }) {
+/** Mot « ZENER® » seul, découpé dans le logo officiel ; size = hauteur des lettres. */
+export function ZenerWordmark({ size = 22 }) {
+  const k = size / (LOGO_H - WORD_TOP);
   return (
     <span
+      role="img"
+      aria-label="ZENER"
       style={{
-        fontWeight: 900,
-        fontSize: size,
-        color,
-        letterSpacing: '-0.02em',
-        lineHeight: 1,
-        position: 'relative',
+        display: 'inline-block',
+        width: LOGO_W * k,
+        height: (LOGO_H - WORD_TOP) * k,
+        backgroundImage: `url(${logoUrl})`,
+        backgroundRepeat: 'no-repeat',
+        backgroundSize: `${LOGO_W * k}px ${LOGO_H * k}px`,
+        backgroundPosition: `0 ${-WORD_TOP * k}px`,
       }}
-    >
-      ZENER
-      <sup style={{ fontSize: size * 0.32, fontStyle: 'normal', fontWeight: 600, marginLeft: 1 }}>®</sup>
-    </span>
+    />
   );
 }
 
+/** Logo complet (anneau au-dessus du mot), comme sur le site. */
+export function ZenerFullLogo({ width = 160 }) {
+  return <img src={logoUrl} width={width} height={(width * LOGO_H) / LOGO_W} alt="ZENER" style={{ display: 'block' }} draggable={false} />;
+}
+
+/** Version horizontale pour la barre latérale : anneau + mot. */
 export default function ZenerLogo({ size = 34 }) {
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 9 }}>
       <ZenerMark size={size} />
-      <ZenerWordmark size={size * 0.62} />
+      <ZenerWordmark size={size * 0.7} />
     </span>
   );
 }

@@ -28,6 +28,7 @@ public class ShiftService {
     static final String SELECT = """
             \sSELECT es.id, es.employee_id, e.first_name || ' ' || e.last_name AS employee_name,
                    upper(left(e.first_name, 1) || left(e.last_name, 1)) AS employee_initials, r.label AS role_label,
+                   CASE WHEN e.photo_path IS NULL THEN NULL ELSE '/files/' || e.photo_path END AS employee_photo_url,
                    es.station_id, s.short_name AS station_name, es.config_id, sc.name AS shift_name, sc.start_time, sc.end_time,
                    es.pumps, es.status, es.started_at, es.ended_at, es.note, es.closed_by,
                    cb.first_name || ' ' || cb.last_name AS closed_by_name,

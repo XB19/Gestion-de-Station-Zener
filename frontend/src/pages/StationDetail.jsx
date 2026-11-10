@@ -10,7 +10,7 @@ import { FormModal, Field, TextInput, SelectInput, useToast } from '../component
 import { useApi, useInterval, useLiveReload } from '../api/hooks.js';
 import { useLiveEvent } from '../api/live.jsx';
 import { useSession } from '../api/session.jsx';
-import { del, post, put } from '../api/client.js';
+import { del, fileUrl, post, put } from '../api/client.js';
 import { ago, avatarColor, date, fcfa, hhmm, isoDay, liters, longDate, num, time } from '../lib/format.js';
 import { StationFormModal } from './Stations.jsx';
 
@@ -381,7 +381,7 @@ export default function StationDetail() {
               }
             />
 
-            <div className="grid" style={{ gridTemplateColumns: 'minmax(0, 1fr) 360px', alignItems: 'start' }}>
+            <div className="grid split" style={{ gridTemplateColumns: 'minmax(0, 1fr) 360px', alignItems: 'start' }}>
               <div className="stack">
                 <Card className="card-pad">
                   <div className="row between">
@@ -411,7 +411,7 @@ export default function StationDetail() {
                     {(s.windows || []).length === 0 && <Empty>Aucune plage : le mode ne change que manuellement</Empty>}
                     {(s.windows || []).map((w) => (
                       <div key={w.id} className="row" style={{ padding: '13px 0', borderBottom: '1px solid var(--border-2)' }}>
-                        <span className="strong" style={{ width: 220 }}>{w.label}{w.holidays && !/férié/i.test(w.label) ? ' · fériés' : ''}</span>
+                        <span className="strong" style={{ flex: '0 1 220px' }}>{w.label}{w.holidays && !/férié/i.test(w.label) ? ' · fériés' : ''}</span>
                         <Badge tone="blue" className="num"><Users size={13} /> {hhmm(w.conventionalFrom)} → {hhmm(w.conventionalTo)}</Badge>
                         <Badge tone="blue" className="num" style={{ marginLeft: 8 }}><CreditCard size={13} /> {hhmm(w.conventionalTo)} → {hhmm(w.conventionalFrom)}</Badge>
                         {exploit && (
@@ -571,7 +571,7 @@ export default function StationDetail() {
                     {(s.team || []).length === 0 && <Empty>Personne en poste</Empty>}
                     {(s.team || []).map((m) => (
                       <div key={m.id} className="list-item" style={{ borderBottom: 0, padding: '10px 0' }}>
-                        <Avatar initials={m.initials} color={avatarColor(m.id)} size={38} />
+                        <Avatar initials={m.initials} color={avatarColor(m.id)} size={38} photo={fileUrl(m.photoUrl)} />
                         <div style={{ flex: 1 }}>
                           <div className="strong">{m.name}</div>
                           <div className="muted" style={{ fontSize: 13 }}>{m.role}{m.pumps ? ` · ${m.pumps.split(', ').length} pistolets` : ''} · depuis {time(m.startedAt)}</div>

@@ -6,7 +6,7 @@ import { Modal } from '../components/feedback.jsx';
 import { useApi, useLiveReload } from '../api/hooks.js';
 import { useLiveEvent } from '../api/live.jsx';
 import { useSession } from '../api/session.jsx';
-import { qs } from '../api/client.js';
+import { fileUrl, qs } from '../api/client.js';
 import { CATEGORY_COLORS, CATEGORY_LABELS, operationIcon } from '../lib/operations.js';
 import { avatarColor, date, exportCsv, isoDay, money, num, time } from '../lib/format.js';
 
@@ -75,7 +75,7 @@ export default function Journal() {
         subtitle="Qui a fait quoi, et quand · toutes les opérations centralisées avec le point de vente et l’agent"
       />
 
-      <div className="grid" style={{ gridTemplateColumns: 'minmax(0, 1fr) 320px', alignItems: 'start' }}>
+      <div className="grid split" style={{ gridTemplateColumns: 'minmax(0, 1fr) 320px', alignItems: 'start' }}>
         <Card>
           <div className="filters" style={{ flexWrap: 'wrap' }}>
             <SearchInput icon={Search} placeholder="Rechercher…" style={{ flex: 1, minWidth: 160 }} value={q} onChange={(e) => setQ(e.target.value)} />
@@ -99,7 +99,7 @@ export default function Journal() {
           <Async state={list}>
             {(data) => (rows.length === 0 ? <Empty>Aucune opération pour ces filtres</Empty> : (
               <>
-                <table className="table">
+                <div className="table-wrap"><table className="table">
                   <thead>
                     <tr><th>Heure</th><th>Qui · où</th><th>Quoi</th><th className="r">Montant</th></tr>
                   </thead>
@@ -118,7 +118,7 @@ export default function Journal() {
                               {system ? (
                                 <span className="avatar" style={{ width: 32, height: 32, background: 'var(--chip)', color: 'var(--muted)' }}><Cpu size={16} /></span>
                               ) : (
-                                <Avatar initials={o.actorInitials} color={avatarColor(o.actorId)} size={32} />
+                                <Avatar initials={o.actorInitials} color={avatarColor(o.actorId)} size={32} photo={fileUrl(o.actorPhotoUrl)} />
                               )}
                               <div>
                                 <div className="cell-title">{o.actorName}</div>
@@ -140,7 +140,7 @@ export default function Journal() {
                       );
                     })}
                   </tbody>
-                </table>
+                </table></div>
                 <Pager data={data} page={page} onPage={setPage} label="opérations" />
               </>
             ))}

@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Mail, Download, FileBarChart, Printer, Check, Save, RefreshCw, Send, Coins } from 'lucide-react';
-import { PageHeader, Card, Badge, Button, Segmented, Trend, Avatar, IcoBox, Async, Empty, Pager, StatusBadge, Select, KV } from '../components/ui.jsx';
+import { PageHeader, Card, Badge, Button, Segmented, Trend, Avatar, IcoBox, Async, Empty, Pager, StatusBadge, Select, KV, Person } from '../components/ui.jsx';
 import { GroupedBars, hourlyBars } from '../components/charts.jsx';
 import { FormModal, Field, TextInput, useToast } from '../components/feedback.jsx';
 import { useApi, useLiveReload } from '../api/hooks.js';
-import { post, put, qs } from '../api/client.js';
+import { fileUrl, post, put, qs } from '../api/client.js';
 import { useSession } from '../api/session.jsx';
 import { avatarColor, dateTime, exportCsv, fcfa, initials, isoDay, liters, longDate, money, num, PAYMENT_LABELS, pct, time } from '../lib/format.js';
 
@@ -62,13 +62,13 @@ function DailyReport({ id, onChanged }) {
                 )}
               </div>
             </div>
-            <div className="row" style={{ gap: 8, marginTop: 10 }}>
+            <div className="row" style={{ gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
               <Badge tone="blue">Généré automatiquement · {dateTime(rep.generatedAt)}</Badge>
               <Badge tone={TONE[rep.statusLabel] || 'gray'}>{rep.statusLabel}</Badge>
               {d.offline && <Badge tone="red">Station hors ligne · données partielles</Badge>}
             </div>
 
-            <div className="grid g4" style={{ gap: 12, marginTop: 18 }}>
+            <div className="grid auto-cols" style={{ gap: 12, marginTop: 18, '--col': '150px' }}>
               {[
                 ['Recette', `${fcfa(d.revenue)} F`, <Change value={d.revenueChangePct} />],
                 ['Volume', liters(d.volume), <Change value={d.volumeChangePct} />],
@@ -97,7 +97,7 @@ function DailyReport({ id, onChanged }) {
 
             <div className="section-label" style={{ marginTop: 22 }}>Rapports de poste</div>
             <div style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
-              <table className="table">
+              <div className="table-wrap"><table className="table">
                 <thead>
                   <tr><th>Poste</th><th>Chef de poste</th><th className="r">Litres</th><th className="r">Recette (F)</th><th>Écart</th></tr>
                 </thead>
@@ -117,7 +117,7 @@ function DailyReport({ id, onChanged }) {
                     </tr>
                   ))}
                 </tbody>
-              </table>
+              </table></div>
             </div>
 
             <div className="grid g2" style={{ gap: 20, marginTop: 18 }}>
@@ -144,7 +144,7 @@ function DailyReport({ id, onChanged }) {
                 onChange={(e) => setComment(e.target.value)}
               />
               <div className="row" style={{ gap: 12, padding: '12px 16px', background: 'var(--surface-2)', borderTop: '1px solid var(--border-2)' }}>
-                <Avatar initials={initials(rep.commentByName || '?')} color={avatarColor(rep.commentBy)} size={34} />
+                <Avatar initials={initials(rep.commentByName || '?')} color={avatarColor(rep.commentBy)} size={34} photo={fileUrl(rep.commentByPhotoUrl)} />
                 <div style={{ flex: 1 }}>
                   <div className="strong">{rep.commentByName || 'Pas encore commenté'}</div>
                   <div className="muted" style={{ fontSize: 13 }}>
@@ -225,7 +225,7 @@ function ShiftReports({ day, stationId }) {
       <Async state={shifts}>
         {(data) => (data.items.length === 0 ? <Empty>Aucun poste ce jour-là</Empty> : (
           <>
-            <table className="table">
+            <div className="table-wrap"><table className="table">
               <thead>
                 <tr><th>Employé</th><th>Station · poste</th><th>Horaires</th><th className="r">Attendu (F)</th><th className="r">Remis (F)</th><th className="r">Reste</th><th>État</th><th /></tr>
               </thead>
@@ -234,7 +234,7 @@ function ShiftReports({ day, stationId }) {
                   <tr key={sh.id}>
                     <td>
                       <div className="row" style={{ gap: 10 }}>
-                        <Avatar initials={sh.employeeInitials} color={avatarColor(sh.employeeId)} size={30} />
+                        <Avatar initials={sh.employeeInitials} color={avatarColor(sh.employeeId)} size={30} photo={fileUrl(sh.employeePhotoUrl)} />
                         <div><div className="cell-title">{sh.employeeName}</div><div className="cell-sub">{sh.roleLabel}</div></div>
                       </div>
                     </td>
@@ -255,7 +255,7 @@ function ShiftReports({ day, stationId }) {
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </table></div>
             <Pager data={data} page={page} onPage={setPage} label="postes" />
           </>
         ))}
@@ -282,7 +282,7 @@ function Transactions({ day, stationId }) {
       <Async state={sales}>
         {(data) => (data.items.length === 0 ? <Empty>Aucune transaction</Empty> : (
           <>
-            <table className="table">
+            <div className="table-wrap"><table className="table">
               <thead><tr><th>Heure</th><th>Lieu</th><th>Détail</th><th>Vendeur</th><th>Paiement</th><th className="r">Montant (F)</th></tr></thead>
               <tbody>
                 {data.items.map((x) => (
@@ -290,13 +290,13 @@ function Transactions({ day, stationId }) {
                     <td className="num muted">{time(x.at, true)}</td>
                     <td>{x.stationName || x.pdvName}{x.pumpCode ? ` · ${x.pumpCode}` : ''}{x.mode === 'AUTONOME' ? ' · auto' : ''}</td>
                     <td>{x.description}</td>
-                    <td className="muted">{x.employeeName || '—'}</td>
+                    <td><Person name={x.employeeName} id={x.employeeId} photo={fileUrl(x.employeePhotoUrl)} /></td>
                     <td>{PAYMENT_LABELS[x.paymentMethod]}{x.cardNumber ? ` ···${x.cardNumber.slice(-4)}` : ''}</td>
                     <td className="r num strong">{fcfa(x.total)}</td>
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </table></div>
             <Pager data={data} page={page} onPage={setPage} label="transactions" />
           </>
         ))}
@@ -315,7 +315,7 @@ function EmailSummary({ day }) {
     if (settings.data) setF({ time: settings.data['email.summary_time'], recipients: settings.data['email.summary_recipients'] });
   }, [settings.data]);
   return (
-    <div className="grid" style={{ gridTemplateColumns: 'minmax(0, 1fr) 360px', alignItems: 'start' }}>
+    <div className="grid split" style={{ gridTemplateColumns: 'minmax(0, 1fr) 360px', alignItems: 'start' }}>
       <Card className="card-pad">
         <div className="card-title">Aperçu du résumé quotidien</div>
         <Async state={preview}>
@@ -420,7 +420,7 @@ export default function Rapports() {
       </div>
 
       {tab === 'Rapports journaliers' && (
-        <div className="grid" style={{ gridTemplateColumns: '340px minmax(0, 1fr)', alignItems: 'start' }}>
+        <div className="grid split" style={{ gridTemplateColumns: '340px minmax(0, 1fr)', alignItems: 'start' }}>
           <Card className="card-pad">
             <div className="row between">
               <div className="card-title">Rapports du {day.slice(8, 10)}/{day.slice(5, 7)}</div>
@@ -445,12 +445,12 @@ export default function Rapports() {
                     onClick={() => setStationId(r.stationId)}
                     className="row"
                     style={{
-                      width: '100%', gap: 14, textAlign: 'left', padding: '12px 14px', borderRadius: 10, marginBottom: 6,
+                      width: '100%', gap: 14, rowGap: 8, flexWrap: 'wrap', textAlign: 'left', padding: '12px 14px', borderRadius: 10, marginBottom: 6,
                       background: active ? '#f5f9fe' : 'transparent', border: active ? '1px solid #bcd3ee' : '1px solid transparent',
                     }}
                   >
                     <IcoBox icon={FileBarChart} tone="blue" size={34} />
-                    <div style={{ flex: 1 }}>
+                    <div style={{ flex: '1 1 150px' }}>
                       <div className="strong" style={{ fontSize: 14 }}>{r.stationShortName}</div>
                       <div className="muted num" style={{ fontSize: 13, marginTop: 2 }}>{fcfa(r.revenue)} F · {num(r.volume)} L</div>
                     </div>

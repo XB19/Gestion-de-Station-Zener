@@ -189,7 +189,7 @@ export default function MonPoste() {
                 foot={sh ? `carte ${fcfa(sh.cardSales)} · mobile ${fcfa(sh.mobileMoneySales)}` : ''} />
             </div>
 
-            <div className="grid" style={{ gridTemplateColumns: 'minmax(0, 1fr) 380px', alignItems: 'start' }}>
+            <div className="grid split" style={{ gridTemplateColumns: 'minmax(0, 1fr) 380px', alignItems: 'start' }}>
               <div className="stack">
                 {open && sh.status === 'EN_POSTE' && station.data && <PumpSale station={station.data} onSold={() => { me.reload(); station.reload(); }} />}
                 {open && sh.status === 'PAUSE' && <Card className="card-pad"><Empty>Poste en pause · reprenez-le pour enregistrer des ventes</Empty></Card>}
@@ -201,7 +201,7 @@ export default function MonPoste() {
                     <span className="muted" style={{ fontSize: 13 }}>{sh ? `depuis ${time(sh.startedAt)}` : ''}</span>
                   </div>
                   {!sh?.sales?.length ? <Empty>Aucune vente</Empty> : (
-                    <table className="table">
+                    <div className="table-wrap"><table className="table">
                       <thead><tr><th>Heure</th><th>Détail</th><th>Pistolet</th><th>Paiement</th><th className="r">Montant (F)</th></tr></thead>
                       <tbody>
                         {sh.sales.slice(0, 30).map((x) => (
@@ -214,7 +214,7 @@ export default function MonPoste() {
                           </tr>
                         ))}
                       </tbody>
-                    </table>
+                    </table></div>
                   )}
                 </Card>
               </div>

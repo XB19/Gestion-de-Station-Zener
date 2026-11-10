@@ -123,6 +123,7 @@ public class DeliveryService {
                    d.source_station_id, s.short_name AS source_station_name, s.latitude AS source_latitude,
                    s.longitude AS source_longitude,
                    d.agent_id, a.first_name || ' ' || a.last_name AS agent_name, a.phone AS agent_phone, d.vehicle,
+                   CASE WHEN a.photo_path IS NULL THEN NULL ELSE '/files/' || a.photo_path END AS agent_photo_url,
                    d.delivered_quantity, d.note, d.cancel_reason, d.created_at, d.departed_at, d.delivered_at, d.sale_id,
                    cb.first_name || ' ' || cb.last_name AS created_by_name,
                    lp.latitude AS last_latitude, lp.longitude AS last_longitude, lp.at AS last_ping_at,

@@ -3,7 +3,7 @@ import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import {
   Mail, Lock, Eye, EyeOff, ArrowRight, ShieldCheck, Radio, Banknote, Wifi, CreditCard, Fuel, Wallet,
 } from 'lucide-react';
-import { ZenerMark, ZenerWordmark } from '../components/ZenerLogo.jsx';
+import { ZenerFullLogo, ZenerMark } from '../components/ZenerLogo.jsx';
 import { Checkbox, IcoBox } from '../components/ui.jsx';
 import { api } from '../api/client.js';
 import { useSession } from '../api/session.jsx';
@@ -140,8 +140,7 @@ export default function Login() {
       <section className="login-form-wrap">
         <form className="login-form" onSubmit={submit}>
           <div className="login-logo">
-            <ZenerMark size={72} />
-            <ZenerWordmark size={38} />
+            <ZenerFullLogo width={150} />
           </div>
 
           <h2>Connexion</h2>

@@ -69,9 +69,9 @@ function Sidebar() {
   const countries = s?.byCountry?.length || 1;
   return (
     <aside className="sidebar">
-      <div className="sidebar-logo">
+      <NavLink to="/" className="sidebar-logo" title="Tableau de bord" style={{ display: 'block' }}>
         <ZenerLogo size={34} />
-      </div>
+      </NavLink>
 
       <button className="org-switch" type="button">
         <span className="org-icon">
@@ -92,7 +92,7 @@ function Sidebar() {
             <div key={group.section}>
               <div className="nav-section">{group.section}</div>
               {items.map(({ to, label, icon: Icon, end, badge }) => (
-                <NavLink key={to} to={to} end={end} className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+                <NavLink key={to} to={to} end={end} title={label} className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
                   <Icon size={19} strokeWidth={1.7} />
                   {label}
                   {badge && pending.data?.pending > 0 && <span className="nav-badge">{pending.data.pending}</span>}
@@ -105,7 +105,7 @@ function Sidebar() {
 
       <div className="sidebar-bottom">
         {can('PARAMETRES', 'JOURNAL') && (
-          <NavLink to="/parametres" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+          <NavLink to="/parametres" title="Paramètres" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
             <Settings size={19} strokeWidth={1.7} />
             Paramètres
           </NavLink>

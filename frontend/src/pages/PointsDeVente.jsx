@@ -7,7 +7,7 @@ import {
 import { PageHeader, Card, Kpi, Trend, Badge, StatusBadge, Button, Avatar, IcoBox, Async, Empty } from '../components/ui.jsx';
 import { FormModal, Field, TextInput, SelectInput, useToast } from '../components/feedback.jsx';
 import { useApi, useInterval, useLiveReload } from '../api/hooks.js';
-import { post } from '../api/client.js';
+import { fileUrl, post } from '../api/client.js';
 import { useSession } from '../api/session.jsx';
 import { ago, avatarColor, dayMonth, fcfa, isoDay, money, num, pct } from '../lib/format.js';
 
@@ -253,7 +253,7 @@ export default function PointsDeVente() {
         <Kpi icon={Clock} tone="orange" label="Demandes d’ouverture" value={s ? s.pendingRequests : '…'} foot={s?.toClose ? `${s.toClose} à clôturer` : 'en attente Admin / DAF'} />
       </div>
 
-      <div className="grid" style={{ gridTemplateColumns: '440px minmax(0, 1fr)', alignItems: 'start' }}>
+      <div className="grid split" style={{ gridTemplateColumns: '440px minmax(0, 1fr)', alignItems: 'start' }}>
         <Card className="card-pad">
           <div className="row between">
             <div className="card-title">Points de vente</div>
@@ -335,7 +335,7 @@ export default function PointsDeVente() {
                       {(p.agentsList || []).length === 0 && <Empty>Aucun agent</Empty>}
                       {(p.agentsList || []).map((a) => (
                         <div key={a.id} className="list-item" style={{ borderBottom: 0, padding: '9px 0' }}>
-                          <Avatar initials={a.initials} color={avatarColor(a.id)} size={38} />
+                          <Avatar initials={a.initials} color={avatarColor(a.id)} size={38} photo={fileUrl(a.photoUrl)} />
                           <div style={{ flex: 1 }}>
                             <div className="strong">{a.name}</div>
                             <div className="muted" style={{ fontSize: 13 }}>{a.role === 'SUPERVISEUR' ? 'Superviseur' : 'Agent'} · pièce d’identité vérifiée à chaque vente</div>

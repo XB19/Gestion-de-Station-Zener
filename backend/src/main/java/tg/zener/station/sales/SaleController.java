@@ -116,6 +116,7 @@ public class SaleController {
             \sSELECT x.id, x.uuid, x.at, x.kind, x.channel, x.mode, x.payment_method, x.payment_ref, x.buyer_profile, x.total,
                    x.station_id, s.short_name AS station_name, x.pdv_id, pv.name AS pdv_name, pu.code AS pump_code,
                    x.employee_id, e.first_name || ' ' || e.last_name AS employee_name, c.number AS card_number,
+                   CASE WHEN e.photo_path IS NULL THEN NULL ELSE '/files/' || e.photo_path END AS employee_photo_url,
                    x.synced_at,
                    (SELECT string_agg(CASE WHEN p.category = 'CARBURANT'
                                            THEN replace(trim(to_char(sl.quantity, 'FM999999990.0')), '.', ',') || ' L ' || p.name

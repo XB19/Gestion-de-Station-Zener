@@ -3,13 +3,13 @@ import { useSearchParams } from 'react-router-dom';
 import {
   Truck, Plus, Droplet, ClipboardList, PackageCheck, Navigation, MapPin, Phone, Check, X, Send, UserCheck, Route,
 } from 'lucide-react';
-import { PageHeader, Card, Kpi, Badge, StatusBadge, Button, Select, KV, Async, Empty, Pager, IcoBox } from '../components/ui.jsx';
+import { PageHeader, Card, Kpi, Badge, StatusBadge, Button, Select, KV, Async, Empty, Pager, IcoBox, Avatar, Person } from '../components/ui.jsx';
 import GeoMap from '../components/GeoMap.jsx';
 import { FormModal, Field, TextInput, SelectInput, useToast } from '../components/feedback.jsx';
 import { useApi, useInterval, useLiveReload } from '../api/hooks.js';
 import { useLiveEvent } from '../api/live.jsx';
 import { useSession } from '../api/session.jsx';
-import { post, qs } from '../api/client.js';
+import { fileUrl, post, qs } from '../api/client.js';
 import { ago, compact, dateTime, isoDay, money, num, PAYMENT_LABELS, time } from '../lib/format.js';
 
 const TABS = [
@@ -183,7 +183,7 @@ function OrderDetail({ id, agents, onChanged, onTrack }) {
               <KV k="Commande" v={`${dateTime(d.createdAt)}${d.createdByName ? ` · ${d.createdByName}` : ''}`} />
             </div>
             <div>
-              <KV k="Livreur" v={d.agentName ? <span className="row" style={{ gap: 6 }}>{d.agentName}{d.agentPhone && <><Phone size={13} /> {d.agentPhone}</>}</span> : '—'} />
+              <KV k="Livreur" v={d.agentName ? <span className="row" style={{ gap: 6 }}><Person name={d.agentName} id={d.agentId} photo={fileUrl(d.agentPhotoUrl)} size={24} />{d.agentPhone && <><Phone size={13} /> {d.agentPhone}</>}</span> : '—'} />
               <KV k="Véhicule" v={d.vehicle || '—'} />
               <KV k="Dernière position" v={d.lastPingAt ? `${ago(d.lastPingAt)}` : '—'} />
               <KV k={d.status === 'LIVREE' ? 'Livrée' : 'Départ'} v={d.status === 'LIVREE' ? `${dateTime(d.deliveredAt)} · ${num(d.deliveredQuantity)} L` : d.departedAt ? dateTime(d.departedAt) : '—'} />
@@ -287,7 +287,7 @@ export default function Mobilite() {
         </div>
       )}
 
-      <div className="grid" style={{ gridTemplateColumns: '420px minmax(0, 1fr)', alignItems: 'start' }}>
+      <div className="grid split" style={{ gridTemplateColumns: '420px minmax(0, 1fr)', alignItems: 'start' }}>
         <Card>
           <div className="card-head" style={{ paddingBottom: 12 }}>
             <div className="card-title">{manage ? 'Commandes' : 'Mes livraisons'}</div>
@@ -345,6 +345,7 @@ export default function Mobilite() {
               <div className="row" style={{ gap: 18, marginTop: 10, flexWrap: 'wrap' }}>
                 {(live.data?.agents || []).map((a) => (
                   <span key={a.id} className="row muted" style={{ gap: 6, fontSize: 13 }}>
+                    <Avatar initials={a.name.split(' ').map((w) => w[0]).join('').slice(0, 2)} size={24} photo={fileUrl(a.photoUrl)} />
                     <Truck size={14} color={a.stale ? 'var(--muted-2)' : 'var(--primary)'} />
                     <b style={{ color: 'var(--text)' }}>{a.name}</b>
                     {a.deliveryRef ? ` · ${a.deliveryRef}` : ' · disponible'} · {num(a.speedKmh)} km/h · {a.at ? time(a.at, true) : '—'}

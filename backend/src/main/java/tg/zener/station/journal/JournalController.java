@@ -27,7 +27,7 @@ public class JournalController {
                    CASE WHEN e.id IS NULL THEN 'Système' ELSE e.first_name || ' ' || e.last_name END AS actor_name,
                    CASE WHEN e.id IS NULL THEN NULL
                         ELSE upper(left(e.first_name, 1) || left(e.last_name, 1)) END AS actor_initials,
-                   r.label AS actor_role,
+                   r.label AS actor_role, CASE WHEN e.photo_path IS NULL THEN NULL ELSE '/files/' || e.photo_path END AS actor_photo_url,
                    COALESCE(pv.name, s.short_name, es.short_name) AS place
             FROM operation_log o
             LEFT JOIN employee e ON e.id = o.actor_id

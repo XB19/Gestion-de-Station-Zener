@@ -211,7 +211,7 @@ export default function Cartes() {
       </div>
 
       {/* Consulter une carte */}
-      <Card className="mb20" style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 1px 280px 270px', alignItems: 'center', padding: '24px 24px' }}>
+      <Card className="mb20 lookup-band" style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 1px 280px 270px', alignItems: 'center', padding: '24px 24px' }}>
         <div style={{ paddingRight: 24 }}>
           <div className="card-title">Consulter une carte</div>
           <div className="card-sub">Saisissez ou scannez le numéro pour voir ses dernières informations et la modifier.</div>
@@ -263,14 +263,14 @@ export default function Cartes() {
             {can('PRIX') && <Button size="sm" icon={Pencil} disabled={!s} onClick={() => setModal({ type: 'prices' })}>Modifier les prix</Button>}
           </div>
         </div>
-        <div className="row" style={{ marginTop: 20, gap: 0 }}>
+        <div className="row" style={{ marginTop: 20, gap: 0, rowGap: 14, flexWrap: 'wrap' }}>
           {[
             [Package, 'gray', 'En stock', s?.inStock],
             [Store, 'orange', 'Attribuées à un PDV', s?.atPdv],
             [Banknote, 'blue', 'Vendues', s?.sold],
             [CircleCheck, 'green', 'Actives', s?.active],
           ].map(([Icon, tone, l, v], i, arr) => (
-            <div key={l} className="row" style={{ flex: 1, gap: 14 }}>
+            <div key={l} className="row" style={{ flex: '1 1 190px', gap: 14 }}>
               <IcoBox icon={Icon} tone={tone} size={40} />
               <div>
                 <div className="muted" style={{ fontSize: 13 }}>{l}</div>
@@ -314,7 +314,7 @@ export default function Cartes() {
         <Async state={list}>
           {(data) => (data.items.length === 0 ? <Empty>Aucune carte</Empty> : (
             <>
-              <table className="table">
+              <div className="table-wrap"><table className="table">
                 <thead>
                   <tr>
                     <th>N° de carte</th><th>Titulaire · groupe</th><th>Type</th><th>Techno</th><th className="r">Solde (FCFA)</th><th>Statut</th>
@@ -342,7 +342,7 @@ export default function Cartes() {
                     </tr>
                   ))}
                 </tbody>
-              </table>
+              </table></div>
               <Pager data={data} page={page} onPage={setPage} label="cartes" />
             </>
           ))}

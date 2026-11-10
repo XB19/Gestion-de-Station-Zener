@@ -94,7 +94,7 @@ export default function Clients() {
           foot={(list.data || []).filter((c) => c.licenceStatus === 'Résiliée').map((c) => c.name).join(' · ') || '—'} />
       </div>
 
-      <div className="grid" style={{ gridTemplateColumns: 'minmax(0, 1fr) 360px', alignItems: 'start' }}>
+      <div className="grid split" style={{ gridTemplateColumns: 'minmax(0, 1fr) 360px', alignItems: 'start' }}>
         <Card>
           <div className="card-head" style={{ paddingBottom: 14, alignItems: 'center' }}>
             <div className="card-title">Clients</div>
@@ -102,7 +102,7 @@ export default function Clients() {
           </div>
           <Async state={list}>
             {() => (rows.length === 0 ? <Empty>Aucun client</Empty> : (
-              <table className="table">
+              <div className="table-wrap"><table className="table">
                 <thead>
                   <tr><th>Client</th><th className="r">Stations</th><th>Licence</th><th>Échéance</th><th>Restant</th><th /></tr>
                 </thead>
@@ -149,7 +149,7 @@ export default function Clients() {
                     );
                   })}
                 </tbody>
-              </table>
+              </table></div>
             ))}
           </Async>
         </Card>

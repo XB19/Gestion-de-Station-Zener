@@ -251,7 +251,7 @@ function ImportModal({ onClose, onDone }) {
       </p>
       <label className="input"><input type="file" accept=".csv" onChange={(e) => read(e.target.files[0])} /></label>
       {rows.length > 0 && (
-        <table className="table" style={{ marginTop: 12 }}>
+        <div className="table-wrap"><table className="table" style={{ marginTop: 12 }}>
           <thead><tr><th>Ligne</th><th>Station</th><th>Type</th><th>Client</th><th>Résultat</th></tr></thead>
           <tbody>
             {rows.map((r) => (
@@ -266,7 +266,7 @@ function ImportModal({ onClose, onDone }) {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       )}
     </Modal>
   );
@@ -338,9 +338,9 @@ export default function Stations() {
           foot={s ? `${s.managerClients} client${s.managerClients > 1 ? 's' : ''} gérant${s.managerClients > 1 ? 's' : ''}` : ''} />
       </div>
 
-      <div className="grid" style={{ gridTemplateColumns: 'minmax(0, 1fr) 400px', alignItems: 'start' }}>
+      <div className="grid split" style={{ gridTemplateColumns: 'minmax(0, 1fr) 400px', alignItems: 'start' }}>
         <Card>
-          <div className="filters" style={{ flexWrap: 'nowrap' }}>
+          <div className="filters">
             <SearchInput icon={Search} placeholder="Rechercher une station…" style={{ flex: 1, minWidth: 150 }} value={q} onChange={(e) => setQ(e.target.value)} />
             <Select icon={Globe} value={filters.country} onChange={setFilter('country')} placeholder="Pays"
               options={(s?.byCountry || []).map((c) => c.country)} />
@@ -350,7 +350,7 @@ export default function Stations() {
           </div>
           <Async state={list}>
             {() => (rows.length === 0 ? <Empty>Aucune station ne correspond</Empty> : (
-              <table className="table">
+              <div className="table-wrap"><table className="table">
                 <thead>
                   <tr>
                     <th>Station</th><th>Client attribué</th><th>Statut</th><th>Mode</th><th className="r">Recette (F)</th>
@@ -375,7 +375,7 @@ export default function Stations() {
                     </tr>
                   ))}
                 </tbody>
-              </table>
+              </table></div>
             ))}
           </Async>
         </Card>

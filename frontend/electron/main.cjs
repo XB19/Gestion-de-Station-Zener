@@ -5,8 +5,8 @@ function createWindow() {
   const win = new BrowserWindow({
     width: 1440,
     height: 900,
-    minWidth: 1180,
-    minHeight: 720,
+    minWidth: 820,
+    minHeight: 600,
     backgroundColor: '#F4F6FA',
     title: 'ZENER Station Manager',
     autoHideMenuBar: true,

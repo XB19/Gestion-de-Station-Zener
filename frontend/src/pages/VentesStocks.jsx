@@ -3,11 +3,11 @@ import {
   Receipt, Plus, LayoutGrid, Fuel, Droplet, Flame, Package, CreditCard, ShoppingCart, ArrowLeftRight, CircleDollarSign,
   TriangleAlert, Pencil, Cylinder, Users, Sparkles, TrendingUp, TrendingDown, Mail, Trash2,
 } from 'lucide-react';
-import { PageHeader, Card, Kpi, Trend, Badge, StatusBadge, Button, Segmented, Select, IcoBox, Async, Empty, Pager } from '../components/ui.jsx';
+import { PageHeader, Card, Kpi, Trend, Badge, StatusBadge, Button, Segmented, Select, IcoBox, Async, Empty, Pager, Person } from '../components/ui.jsx';
 import { Donut } from '../components/charts.jsx';
 import { FormModal, Field, TextInput, SelectInput, useToast } from '../components/feedback.jsx';
 import { useApi, useLiveReload } from '../api/hooks.js';
-import { post, put, qs } from '../api/client.js';
+import { fileUrl, post, put, qs } from '../api/client.js';
 import { useSession } from '../api/session.jsx';
 import { compact, dateTime, fcfa, money, num, PAYMENT_LABELS, pct } from '../lib/format.js';
 
@@ -40,7 +40,7 @@ function PricesModal({ products, onClose, onSaved }) {
       notify(changes.length ? `${changes.length} prix modifiés` : 'Aucun changement');
       onSaved();
     }}>
-      <table className="table">
+      <div className="table-wrap"><table className="table">
         <thead>
           <tr><th>Produit</th>{PROFILES.map(([, l]) => <th key={l} className="r">{l}</th>)}</tr>
         </thead>
@@ -59,7 +59,7 @@ function PricesModal({ products, onClose, onSaved }) {
             </tr>
           ))}
         </tbody>
-      </table>
+      </table></div>
     </FormModal>
   );
 }
@@ -245,7 +245,7 @@ export default function VentesStocks() {
           foot={s ? <><Badge tone="red">{s.alertsCritical} critiques</Badge> {s.alerts - s.alertsCritical} à surveiller</> : ''} />
       </div>
 
-      <div className="grid mb20" style={{ gridTemplateColumns: 'minmax(0, 1fr) 420px', alignItems: 'start' }}>
+      <div className="grid split mb20" style={{ gridTemplateColumns: 'minmax(0, 1fr) 420px', alignItems: 'start' }}>
         <Card>
           <div className="card-head" style={{ paddingBottom: 14 }}>
             <div>
@@ -256,7 +256,7 @@ export default function VentesStocks() {
           </div>
           <Async state={prices}>
             {() => (shown.length === 0 ? <Empty>Aucun produit</Empty> : (
-              <table className="table">
+              <div className="table-wrap"><table className="table">
                 <thead>
                   <tr><th>Produit</th>{PROFILES.map(([, l]) => <th key={l} className="r">{l}</th>)}</tr>
                 </thead>
@@ -277,7 +277,7 @@ export default function VentesStocks() {
                     </tr>
                   ))}
                 </tbody>
-              </table>
+              </table></div>
             ))}
           </Async>
         </Card>
@@ -331,7 +331,7 @@ export default function VentesStocks() {
         </div>
         <Async state={stock}>
           {() => (rows.length === 0 ? <Empty>Aucun stock pour ce filtre</Empty> : (
-            <table className="table">
+            <div className="table-wrap"><table className="table">
               <thead>
                 <tr><th>Produit</th><th>Station</th><th className="r">Stock</th><th style={{ width: 230 }}>Niveau</th><th>Seuil d’alerte</th><th>Tendance 7 j</th><th>État</th></tr>
               </thead>
@@ -359,7 +359,7 @@ export default function VentesStocks() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </table></div>
           ))}
         </Async>
         <div className="row" style={{ gap: 10, padding: '14px 20px', borderTop: '1px solid var(--border-2)', color: 'var(--text-2)' }}>
@@ -377,7 +377,7 @@ export default function VentesStocks() {
           <Async state={sales}>
             {(data) => (data.items.length === 0 ? <Empty>Aucune vente</Empty> : (
               <>
-                <table className="table">
+                <div className="table-wrap"><table className="table">
                   <thead>
                     <tr><th>Quand</th><th>Lieu</th><th>Type</th><th>Détail</th><th>Vendeur</th><th>Paiement</th><th className="r">Montant (F)</th></tr>
                   </thead>
@@ -388,13 +388,13 @@ export default function VentesStocks() {
                         <td>{x.stationName || x.pdvName}{x.pumpCode ? ` · ${x.pumpCode}` : ''}</td>
                         <td><Badge tone={x.mode === 'AUTONOME' ? 'navy' : 'gray'}>{KIND_LABELS[x.kind] || x.kind}{x.mode === 'AUTONOME' ? ' · auto' : ''}</Badge></td>
                         <td>{x.description}</td>
-                        <td className="muted">{x.employeeName || '—'}</td>
+                        <td><Person name={x.employeeName} id={x.employeeId} photo={fileUrl(x.employeePhotoUrl)} /></td>
                         <td>{PAYMENT_LABELS[x.paymentMethod]}{x.cardNumber ? ` ···${x.cardNumber.slice(-4)}` : ''}</td>
                         <td className="r num strong">{fcfa(x.total)}</td>
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                </table></div>
                 <Pager data={data} page={page} onPage={setPage} label="ventes" />
               </>
             ))}

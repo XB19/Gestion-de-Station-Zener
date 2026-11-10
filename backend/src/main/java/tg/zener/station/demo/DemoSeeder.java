@@ -166,6 +166,7 @@ public class DemoSeeder {
     private final ReportService reports;
     private final UserLoader users;
     private final DemoSimulator simulator;
+    private final DemoAvatars avatars;
     private final TransactionTemplate tx;
     private final boolean enabled;
 
@@ -193,7 +194,8 @@ public class DemoSeeder {
 
     public DemoSeeder(Db db, PasswordEncoder encoder, CardIssuer issuer, Refs refs, Settings settings,
                       RechargeService rechargeService, ValidationService validations, ThresholdService thresholds,
-                      ReportService reports, UserLoader users, DemoSimulator simulator, PlatformTransactionManager tm,
+                      ReportService reports, UserLoader users, DemoSimulator simulator, DemoAvatars avatars,
+                      PlatformTransactionManager tm,
                       @Value("${app.demo-data}") boolean enabled) {
         this.db = db;
         this.encoder = encoder;
@@ -206,6 +208,7 @@ public class DemoSeeder {
         this.reports = reports;
         this.users = users;
         this.simulator = simulator;
+        this.avatars = avatars;
         this.tx = new TransactionTemplate(tm);
         this.enabled = enabled;
     }
@@ -222,6 +225,7 @@ public class DemoSeeder {
             } else {
                 log.info("Données de démonstration : base déjà remplie, rien à faire");
             }
+            avatars.ensureAll();
             simulator.start();
             return;
         }
@@ -245,6 +249,7 @@ public class DemoSeeder {
         tx.executeWithoutResult(s -> finish());
         log.info("Données de démonstration créées en {} s · connexion : ama.kpodar@zener.tg / {}",
                 (System.currentTimeMillis() - t0) / 1000, PASSWORD);
+        avatars.ensureAll();
         simulator.start();
     }
 

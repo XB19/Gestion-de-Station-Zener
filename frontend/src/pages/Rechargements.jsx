@@ -46,7 +46,7 @@ function AmountPicker({ value, onChange }) {
   const [other, setOther] = useState(!AMOUNTS.includes(value));
   return (
     <>
-      <div className="grid" style={{ gridTemplateColumns: 'repeat(5, 1fr)', gap: 8 }}>
+      <div className="grid auto-cols" style={{ gridTemplateColumns: 'repeat(5, 1fr)', gap: 8, '--col': '96px' }}>
         {AMOUNTS.map((a) => (
           <button
             key={a}
@@ -291,7 +291,7 @@ function BulkRecharge({ onDone }) {
   ] : [];
 
   return (
-    <div className="grid" style={{ gridTemplateColumns: 'minmax(0, 1fr) 360px', alignItems: 'start' }}>
+    <div className="grid split" style={{ gridTemplateColumns: 'minmax(0, 1fr) 360px', alignItems: 'start' }}>
       <div className="stack">
         <Card className="card-pad">
           <div className="card-title">Rechargement en masse</div>
@@ -337,7 +337,7 @@ function BulkRecharge({ onDone }) {
                 <Badge tone="red">{b.errors} erreur{b.errors > 1 ? 's' : ''}</Badge>
               </div>
             </div>
-            <table className="table">
+            <div className="table-wrap"><table className="table">
               <thead>
                 <tr><th style={{ width: 40 }} /><th>N° de carte</th><th>Titulaire</th><th className="r">Montant (F)</th><th>Contrôle</th></tr>
               </thead>
@@ -355,7 +355,7 @@ function BulkRecharge({ onDone }) {
                   );
                 })}
               </tbody>
-            </table>
+            </table></div>
             <Pager data={{ total: b.lines, size: b.size, items: b.items }} page={page} onPage={setPage} label="lignes" />
           </Card>
         )}
@@ -429,7 +429,7 @@ export default function Rechargements() {
         <>
           {mode === 'En masse' && <BulkRecharge onDone={history.reload} />}
           {mode !== 'En masse' && (
-            <div className="grid" style={{ gridTemplateColumns: 'minmax(0, 1fr) 380px', alignItems: 'start' }}>
+            <div className="grid split" style={{ gridTemplateColumns: 'minmax(0, 1fr) 380px', alignItems: 'start' }}>
               {mode === 'Recharge unitaire' ? <UnitRecharge initialCard={params.get('card')} threshold={threshold} onDone={history.reload} />
                 : <RemoteRecharge onDone={history.reload} />}
               <Card className="card-pad">
@@ -460,7 +460,7 @@ export default function Rechargements() {
         <Async state={history}>
           {(data) => (data.items.length === 0 ? <Empty>Aucune recharge</Empty> : (
             <>
-              <table className="table">
+              <div className="table-wrap"><table className="table">
                 <thead>
                   <tr><th>Réf.</th><th>Quand</th><th>Carte</th><th>Titulaire</th><th className="r">Montant (F)</th><th>Canal · paiement</th><th>Par · lieu</th><th>Statut</th></tr>
                 </thead>
@@ -478,7 +478,7 @@ export default function Rechargements() {
                     </tr>
                   ))}
                 </tbody>
-              </table>
+              </table></div>
               <Pager data={data} page={page} onPage={setPage} label="recharges" />
             </>
           ))}
