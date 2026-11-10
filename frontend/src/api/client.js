@@ -120,7 +120,11 @@ export function fileUrl(path) {
 /** Téléchargement d'un fichier protégé (modèle de recharge…). */
 export async function download(path, filename) {
   const res = await fetch(`${API_URL}/api${path}`, { headers: { Authorization: `Bearer ${getToken()}` } });
-  if (!res.ok) throw new ApiError('Téléchargement impossible', 'TELECHARGEMENT', res.status);
+  if (!res.ok) {
+    // l'API renvoie { code, message } en français (filtre non applicable, fichier trop volumineux…)
+    const err = await res.json().catch(() => null);
+    throw new ApiError(err?.message || 'Téléchargement impossible', err?.code || 'TELECHARGEMENT', res.status);
+  }
   const blob = await res.blob();
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);

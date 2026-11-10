@@ -488,3 +488,11 @@ button:disabled, .btn:disabled { opacity: .55; cursor: not-allowed; }
   .topbar-right .select { max-width: 150px; }
   .topbar-right .select select { max-width: 100px; }
 }
+
+/* Extractions : liste des extractions à gauche, liste déroulante quand la fenêtre est étroite */
+.ex-section { font-size: 10.5px; letter-spacing: .08em; font-weight: 600; color: var(--muted); text-transform: uppercase; padding: 8px 8px 4px; }
+.ex-picker { display: none; }
+@media (max-width: 1240px) {
+  .ex-picker { display: flex; }
+  .ex-list { display: none; }
+}

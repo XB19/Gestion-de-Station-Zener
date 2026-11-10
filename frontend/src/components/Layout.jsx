@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import {
   LayoutGrid, Fuel, Store, CreditCard, Wallet, ShieldCheck, ShoppingCart, Users, Building2,
-  FileBarChart, ScrollText, Settings, LogOut, Search, Bell, ChevronDown, Globe, TriangleAlert, Truck, Timer,
+  FileBarChart, ScrollText, Settings, LogOut, Search, Bell, ChevronDown, Globe, TriangleAlert, Truck, Timer, Database,
 } from 'lucide-react';
 import ZenerLogo from './ZenerLogo.jsx';
 import { Avatar, IcoBox } from './ui.jsx';
@@ -52,6 +52,7 @@ const NAV = [
     items: [
       { to: '/rapports', label: 'Rapports', icon: FileBarChart, rights: ['RAPPORTS'] },
       { to: '/journal', label: "Journal d'opérations", icon: ScrollText, rights: ['JOURNAL'] },
+      { to: '/extractions', label: 'Extractions', icon: Database, rights: ['EXTRACTIONS'] },
     ],
   },
 ];

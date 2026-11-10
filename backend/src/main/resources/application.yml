@@ -19,6 +19,9 @@ spring:
       write-dates-as-timestamps: false
     default-property-inclusion: always
     time-zone: ${APP_TIMEZONE:Africa/Lome}
+  mvc:
+    async:
+      request-timeout: 15m   # extractions volumineuses écrites en flux
   servlet:
     multipart:
       max-file-size: 10MB

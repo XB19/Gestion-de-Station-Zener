@@ -1,6 +1,6 @@
 import {
   Fuel, Wallet, ShieldCheck, CreditCard, ArrowLeftRight, Flame, Mail, Pencil, Building2, CloudOff, Wifi, WifiOff, LogIn,
-  ShoppingCart, Truck, CircleCheck, CircleX, Ban, Users, FileBarChart, Package, Coins, MapPin,
+  ShoppingCart, Truck, CircleCheck, CircleX, Ban, Users, FileBarChart, Package, Coins, MapPin, Download,
 } from 'lucide-react';
 
 // Icône et couleur d'une entrée du journal d'opérations (type puis catégorie).
@@ -44,6 +44,7 @@ const BY_CATEGORY = {
   MODIFICATIONS: [Pencil, 'gray'],
   SYSTEME: [Wifi, 'gray'],
   LIVRAISONS: [Truck, 'teal'],
+  EXTRACTIONS: [Download, 'navy'],
 };
 
 export function operationIcon(op) {
@@ -61,6 +62,7 @@ export const CATEGORY_LABELS = {
   MODIFICATIONS: 'Modifications',
   SYSTEME: 'Système',
   LIVRAISONS: 'Livraisons',
+  EXTRACTIONS: 'Extractions',
 };
 
 export const CATEGORY_COLORS = {
@@ -72,4 +74,5 @@ export const CATEGORY_COLORS = {
   MODIFICATIONS: '#94a3b8',
   SYSTEME: '#cbd5e1',
   LIVRAISONS: '#13917d',
+  EXTRACTIONS: '#475569',
 };

@@ -21,6 +21,7 @@ public class Journal {
     public static final String MODIFICATIONS = "MODIFICATIONS";
     public static final String SYSTEME = "SYSTEME";
     public static final String LIVRAISONS = "LIVRAISONS";
+    public static final String EXTRACTIONS = "EXTRACTIONS";
 
     private final Db db;
     private final LiveFeed live;

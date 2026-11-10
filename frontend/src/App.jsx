@@ -20,6 +20,7 @@ import Clients from './pages/Clients.jsx';
 import Mobilite from './pages/Mobilite.jsx';
 import MonPoste from './pages/MonPoste.jsx';
 import Parametres from './pages/Parametres.jsx';
+import Extractions from './pages/Extractions.jsx';
 
 // HashRouter : fonctionne aussi en file:// dans Electron
 export default function App() {
@@ -47,6 +48,7 @@ export default function App() {
           <Route path="/mobilite" element={<Mobilite />} />
           <Route path="/mon-poste" element={<MonPoste />} />
           <Route path="/parametres" element={<Parametres />} />
+          <Route path="/extractions" element={<Extractions />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

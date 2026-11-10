@@ -1,5 +1,6 @@
 package tg.zener.station.security;
 
+import jakarta.servlet.DispatcherType;
 import java.util.Arrays;
 import java.util.List;
 import org.springframework.beans.factory.annotation.Value;
@@ -29,6 +30,9 @@ public class SecurityConfig {
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .exceptionHandling(e -> e.authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
                 .authorizeHttpRequests(a -> a
+                        // fin d'une réponse asynchrone (fichier écrit en flux, SSE) ou page d'erreur : la requête
+                        // d'origine a déjà été authentifiée et autorisée
+                        .dispatcherTypeMatchers(DispatcherType.ASYNC, DispatcherType.ERROR).permitAll()
                         .requestMatchers("/api/auth/login", "/api/health", "/api/public/**").permitAll()
                         // PC station : authentifié par sa clé (en-têtes X-Station-Code / X-Station-Key)
                         .requestMatchers("/api/hub/**").permitAll()

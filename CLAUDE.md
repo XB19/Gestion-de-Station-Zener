@@ -78,12 +78,14 @@ Paquet `tg.zener.station`, un sous-paquet par module. Pas de JPA : SQL explicite
 | Zen Mobility & GPS | `mobility/*` | `/api/mobility/orders` (création ≥ `mobility.min_quantity`, `/validate`, `/assign`, `/depart`, `/deliver` → vente canal `LIVRAISON` + sortie de cuve + débit de la carte, `/cancel`), `/summary`, `/my-deliveries` ; `/api/tracking/ping` (droit `LIVRER`), `/api/tracking/live` ; événements `location` et `delivery` |
 | PC station | `hub/HubController` | `/api/hub/heartbeat`, `/authorize`, `/sales` (idempotent ; pompiste retrouvé par les pistolets de son poste), `/gas` (distributeur, carte obligatoire), `/location` (station mobile) ; événements `pump` |
 | Tâches des stations | `stations/StationJobs` | chaque minute : plages horaires (bascule manuelle prioritaire jusqu'à `mode_override_until`) et passages en ligne / instable / hors ligne (colonne `station.last_status`, journal + événement `station`) |
+| Extractions (Gestionnaire) | `extractions/*` | droit `EXTRACTIONS` (Admin ; le gestionnaire reçoit un compte Admin, pas de rôle dédié). `GET /api/extractions` (catalogue), `/{code}` (page + totaux, filtres `from`, `to`, `stationId`, `pdvId`, `cardId`, `holderId`, `groupId`, `productId`, `employeeId`, `shiftId`), `/{code}/export?format=csv|xlsx` (flux : CSV UTF-8 BOM « ; », XLSX SXSSF + feuille « Filtres » ; journalisé catégorie `EXTRACTIONS`), `/cards?q=` (numéro complet, 5 derniers chiffres ou fragment → liste de choix), `/holders`, `/employees`, `/shifts`, `/options`. Une extraction = une entrée de `ExtractionCatalog` (colonnes typées, SELECT, conditions de filtre) ; écran `#/extractions` |
 | Démonstration | `demo/DemoSeeder`, `demo/DemoSimulator` | voir « Données de démonstration » |
 
 ## État et suites
 
 Les 11 points de l'ancienne liste « Reste à faire » sont faits (9 novembre 2026). Vérifié :
-- `./mvnw test` : 33 tests unitaires (`ModeScheduleTest`, `ThresholdServiceTest`, `CardServiceTest`, `BatchImportTest`), tous verts.
+- `./mvnw test` : 41 tests unitaires (`ModeScheduleTest`, `ThresholdServiceTest`, `CardServiceTest`, `BatchImportTest`, `ExtractionServiceTest`), tous verts.
+- Extractions (10 novembre 2026) : 37 vérifications d'API (droits, 12 extractions, recherche de carte, filtres, CSV / XLSX, journal) ; écran vérifié dans le navigateur.
 - Serveur lancé sur une base vide avec `DEMO_DATA=true` (création en ~55 s, ~16 000 ventes), puis 136 vérifications d'API par un script Python (non versionné) : lecture de tous les écrans ; recharge au-dessus du palier → Comptable → DAF → carte créditée ; activation refusée à l'émetteur ; vente PDV hors ligne synchronisée deux fois sans doublon ; refus carte (hors horaires, produit, bloquée, solde / plafond) ; postes et reste à remettre ; employés, photo, rôles ; rapports ; PC station (autonome : carte + PIN, idempotence, distributeur de gaz) ; Zen Mobility jusqu'au débit de la carte.
 - Tâches planifiées observées en direct : bascule automatique par plage horaire, station hors ligne puis de nouveau en ligne.
 - Docker : `docker compose up -d --build` construit l'API (Dockerfile multi-étapes), démarre la base et crée la démonstration (vérifié le 10 novembre 2026, voir le README).
@@ -126,6 +128,8 @@ PGPASSWORD=zener "$PG/psql.exe" -h localhost -p 5434 -U zener -d postgres -c "CR
 ```
 
 (Le PostgreSQL du port 5432 a un mot de passe inconnu : ne pas l'utiliser.)
+
+Windows réserve parfois une plage de ports qui inclut 5434 (`netsh interface ipv4 show excludedportrange protocol=tcp`, par ex. 5433-5532) : PostgreSQL ne peut alors pas s'y lier (« Permission denied »). Lancer l'instance sur un autre port (`-o "-p 5601"`) et l'API avec `DB_URL=jdbc:postgresql://localhost:5601/zener_station`.
 
 Lancement — **attention** : la variable d'environnement globale `SPRING_DATASOURCE_URL` (d'un autre projet) écrase la configuration ; la retirer :
 
