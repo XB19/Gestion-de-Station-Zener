@@ -151,25 +151,136 @@ function WindowModal({ stationId, window: w, onClose, onSaved }) {
   );
 }
 
-function PumpModal({ stationId, pump, onClose, onSaved }) {
+/** Pistolet : ajout ou modification complète (Admin), simple mise hors service (exploitation). */
+function PumpModal({ stationId, pump, full, onClose, onSaved }) {
   const notify = useToast();
-  const [state, setState] = useState(pump.state === 'DISTRIBUE' ? 'LIBRE' : pump.state);
+  const [f, setF] = useState({
+    code: pump?.code || '', port: pump?.port || '', productCode: pump?.productCode || 'SUPER',
+    state: pump ? (pump.state === 'DISTRIBUE' ? 'LIBRE' : pump.state) : 'LIBRE',
+  });
+  const set = (k) => (v) => setF((x) => ({ ...x, [k]: v }));
+  const remove = async () => {
+    if (!window.confirm(`Supprimer le pistolet ${pump.code} ?`)) return;
+    try {
+      await del(`/stations/${stationId}/pumps/${pump.id}`);
+      notify('Pistolet supprimé');
+      onSaved();
+      onClose();
+    } catch (e) {
+      notify(e.message, 'error');
+    }
+  };
   return (
     <FormModal
-      title={`Pistolet ${pump.code} · ${pump.port}`}
+      title={pump ? `Pistolet ${pump.code} · ${pump.port}` : 'Nouveau pistolet'}
       onClose={onClose}
-      submitLabel="Enregistrer"
+      submitLabel={pump ? 'Enregistrer' : 'Ajouter'}
       onSubmit={async () => {
-        await put(`/stations/${stationId}/pumps/${pump.id}`, { code: pump.code, port: pump.port, productCode: pump.productCode, state });
-        notify(`Pistolet ${pump.code} : ${PUMP_STATE[state].toLowerCase()}`);
+        if (pump) await put(`/stations/${stationId}/pumps/${pump.id}`, f);
+        else await post(`/stations/${stationId}/pumps`, f);
+        notify(pump ? `Pistolet ${f.code} : ${PUMP_STATE[f.state].toLowerCase()}` : `Pistolet ${f.code} ajouté sur ${f.port}`);
         onSaved();
       }}
     >
-      <Field label="État">
-        <SelectInput value={state} onChange={setState} options={[{ value: 'LIBRE', label: 'En service' }, { value: 'HORS_SERVICE', label: 'Hors service' }]} />
-      </Field>
-      <div className="muted" style={{ marginTop: 12, fontSize: 13 }}>{pump.productName} · index {num(pump.indexTotal, 1)} L</div>
+      <div className="form-grid">
+        {full && (
+          <>
+            <Field label="Code"><TextInput value={f.code} onChange={set('code')} required placeholder="P9" /></Field>
+            <Field label="Port du hub"><TextInput value={f.port} onChange={set('port')} required placeholder="COM10" /></Field>
+            <Field label="Carburant">
+              <SelectInput value={f.productCode} onChange={set('productCode')} options={[{ value: 'SUPER', label: 'Super' }, { value: 'GASOIL', label: 'Gasoil' }, { value: 'PETROLE', label: 'Pétrole' }]} />
+            </Field>
+          </>
+        )}
+        <Field label="État">
+          <SelectInput value={f.state} onChange={set('state')} options={[{ value: 'LIBRE', label: 'En service' }, { value: 'HORS_SERVICE', label: 'Hors service' }]} />
+        </Field>
+      </div>
+      {pump && <div className="muted" style={{ marginTop: 12, fontSize: 13 }}>{pump.productName} · index {num(pump.indexTotal, 1)} L</div>}
+      {pump && full && <button type="button" className="btn btn-sm btn-danger" style={{ marginTop: 14 }} onClick={remove}><Trash2 size={14} /> Supprimer le pistolet</button>}
     </FormModal>
+  );
+}
+
+/** Cuve : capacité, seuil manuel (vide = seuil automatique), délai de livraison. */
+function TankModal({ stationId, tank, onClose, onSaved }) {
+  const notify = useToast();
+  const [f, setF] = useState({
+    name: tank?.name || 'Cuve ', productCode: tank?.productCode || 'SUPER', capacity: tank?.capacity ?? 30000, volume: tank ? undefined : 0,
+    thresholdManual: tank?.thresholdManual ?? '', leadDays: tank?.leadDays ?? 3,
+  });
+  const set = (k) => (v) => setF((x) => ({ ...x, [k]: v }));
+  return (
+    <FormModal title={tank ? tank.name : 'Nouvelle cuve'} submitLabel={tank ? 'Enregistrer' : 'Ajouter'} onClose={onClose} onSubmit={async () => {
+      const body = { ...f, capacity: Number(f.capacity), volume: f.volume === undefined ? null : Number(f.volume || 0),
+        thresholdManual: f.thresholdManual === '' ? null : Number(f.thresholdManual), leadDays: Number(f.leadDays) };
+      if (tank) await put(`/stations/${stationId}/tanks/${tank.id}`, body);
+      else await post(`/stations/${stationId}/tanks`, body);
+      notify(tank ? 'Cuve modifiée' : 'Cuve ajoutée');
+      onSaved();
+    }}>
+      <div className="form-grid">
+        <Field label="Nom"><TextInput value={f.name} onChange={set('name')} required /></Field>
+        <Field label="Carburant">
+          {tank ? <TextInput value={tank.productName} onChange={() => {}} disabled />
+            : <SelectInput value={f.productCode} onChange={set('productCode')} options={[{ value: 'SUPER', label: 'Super' }, { value: 'GASOIL', label: 'Gasoil' }, { value: 'PETROLE', label: 'Pétrole' }]} />}
+        </Field>
+        <Field label="Capacité (L)"><TextInput type="number" min="1" value={f.capacity} onChange={set('capacity')} required /></Field>
+        {!tank && <Field label="Volume actuel (L)"><TextInput type="number" min="0" value={f.volume} onChange={set('volume')} /></Field>}
+        <Field label="Seuil manuel (L)" hint={tank?.thresholdAuto ? `Vide = seuil automatique (${num(tank.thresholdAuto)} L)` : 'Vide = seuil automatique'}>
+          <TextInput type="number" min="0" value={f.thresholdManual} onChange={set('thresholdManual')} />
+        </Field>
+        <Field label="Délai de livraison (jours)"><TextInput type="number" min="0" value={f.leadDays} onChange={set('leadDays')} /></Field>
+      </div>
+    </FormModal>
+  );
+}
+
+/** Postes types de la station (Matin, Soir, Nuit…). */
+function ShiftConfigs({ station, editable, onChanged }) {
+  const notify = useToast();
+  const [f, setF] = useState({ name: '', startTime: '06:00', endTime: '14:00' });
+  const add = async (e) => {
+    e.preventDefault();
+    try {
+      await post(`/stations/${station.id}/shift-configs`, { name: f.name, startTime: `${f.startTime}:00`, endTime: `${f.endTime}:00` });
+      notify('Poste type ajouté');
+      setF({ ...f, name: '' });
+      onChanged();
+    } catch (err) {
+      notify(err.message, 'error');
+    }
+  };
+  const remove = async (c) => {
+    try {
+      await del(`/stations/${station.id}/shift-configs/${c.id}`);
+      notify('Poste type supprimé');
+      onChanged();
+    } catch (err) {
+      notify(err.message, 'error');
+    }
+  };
+  return (
+    <div style={{ marginTop: 14, borderTop: '1px solid var(--border-2)', paddingTop: 12 }}>
+      <div className="section-label">Postes types</div>
+      {(station.shiftConfigs || []).map((c) => (
+        <div key={c.id} className="kv">
+          <span className="k">{c.name}</span>
+          <span className="v row num" style={{ gap: 8 }}>
+            {hhmm(c.startTime)} → {hhmm(c.endTime)}
+            {editable && <button className="link-more" title="Supprimer" onClick={() => remove(c)}><Trash2 size={14} /></button>}
+          </span>
+        </div>
+      ))}
+      {editable && (
+        <form className="row" style={{ gap: 6, marginTop: 8 }} onSubmit={add}>
+          <label className="input" style={{ flex: 1 }}><input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="Nom" required /></label>
+          <label className="input" style={{ width: 92 }}><input type="time" value={f.startTime} onChange={(e) => setF({ ...f, startTime: e.target.value })} /></label>
+          <label className="input" style={{ width: 92 }}><input type="time" value={f.endTime} onChange={(e) => setF({ ...f, endTime: e.target.value })} /></label>
+          <button className="icon-btn" type="submit" title="Ajouter"><Plus size={16} /></button>
+        </form>
+      )}
+    </div>
   );
 }
 
@@ -318,9 +429,12 @@ export default function StationDetail() {
                   <div className="row between" style={{ alignItems: 'flex-start' }}>
                     <div>
                       <div className="card-title">Hub & pistolets</div>
-                      <div className="card-sub">Un appareil par port{exploit ? ' · cliquez sur un pistolet pour le mettre hors service' : ''}</div>
+                      <div className="card-sub">Un appareil par port{exploit ? ' · cliquez sur un pistolet pour le modifier' : ''}</div>
                     </div>
-                    <span className="muted" style={{ fontSize: 13 }}>Flux binaire lu par le PC station · {s.lastSeenAt ? ago(s.lastSeenAt) : 'jamais'}</span>
+                    <span className="row" style={{ gap: 10 }}>
+                      <span className="muted" style={{ fontSize: 13 }}>Flux binaire lu par le PC station · {s.lastSeenAt ? ago(s.lastSeenAt) : 'jamais'}</span>
+                      {can('STATIONS_GERER') && <Button size="sm" icon={Plus} onClick={() => setModal({ type: 'pump' })}>Pistolet</Button>}
+                    </span>
                   </div>
                   <div className="grid g4" style={{ gap: 12, marginTop: 18 }}>
                     {(s.pumps || []).map((p) => {
@@ -395,11 +509,16 @@ export default function StationDetail() {
                       <div className="card-title">Cuves</div>
                       <div className="card-sub">- - - seuil ajusté automatiquement</div>
                     </div>
-                    <Sparkles size={17} color="var(--muted)" />
+                    <span className="row" style={{ gap: 8 }}>
+                      {can('STATIONS_GERER') && <Button size="sm" icon={Plus} onClick={() => setModal({ type: 'tank' })}>Cuve</Button>}
+                      <Sparkles size={17} color="var(--muted)" />
+                    </span>
                   </div>
                   <div className="grid g3" style={{ gap: 10, marginTop: 18 }}>
                     {(s.tanks || []).map((t) => (
-                      <div key={t.id} style={{ textAlign: 'center' }}>
+                      <div key={t.id} style={{ textAlign: 'center' }} className={can('STOCKS') ? 'tr-click' : ''}
+                        title={can('STOCKS') ? 'Modifier la cuve (capacité, seuil, délai)' : undefined}
+                        onClick={() => can('STOCKS') && setModal({ type: 'tank', tank: t })}>
                         <div style={{ position: 'relative', height: 150, borderRadius: 10, background: '#eef2f6', overflow: 'hidden', border: '1px solid var(--border)' }}>
                           <div className="num" style={{ position: 'absolute', top: 12, left: 0, right: 0, fontSize: 18, fontWeight: 700, zIndex: 2 }}>{num(t.pct)} %</div>
                           <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: `${t.pct}%`, background: t.belowThreshold ? '#e5575c' : TANK_COLORS[t.productCode] }} />
@@ -461,13 +580,15 @@ export default function StationDetail() {
                       </div>
                     ))}
                   </div>
+                  <ShiftConfigs station={s} editable={exploit} onChanged={st.reload} />
                 </Card>
               </div>
             </div>
 
             {modal?.type === 'edit' && <StationFormModal station={s} onClose={() => setModal(null)} onSaved={st.reload} />}
             {modal?.type === 'window' && <WindowModal stationId={s.id} window={modal.window} onClose={() => setModal(null)} onSaved={st.reload} />}
-            {modal?.type === 'pump' && <PumpModal stationId={s.id} pump={modal.pump} onClose={() => setModal(null)} onSaved={st.reload} />}
+            {modal?.type === 'pump' && <PumpModal stationId={s.id} pump={modal.pump} full={can('STATIONS_GERER')} onClose={() => setModal(null)} onSaved={st.reload} />}
+            {modal?.type === 'tank' && <TankModal stationId={s.id} tank={modal.tank} onClose={() => setModal(null)} onSaved={st.reload} />}
           </>
         );
       }}

@@ -86,23 +86,20 @@ Les 11 points de l'ancienne liste « Reste à faire » sont faits (9 novembre 20
 - `./mvnw test` : 33 tests unitaires (`ModeScheduleTest`, `ThresholdServiceTest`, `CardServiceTest`, `BatchImportTest`), tous verts.
 - Serveur lancé sur une base vide avec `DEMO_DATA=true` (création en ~55 s, ~16 000 ventes), puis 136 vérifications d'API par un script Python (non versionné) : lecture de tous les écrans ; recharge au-dessus du palier → Comptable → DAF → carte créditée ; activation refusée à l'émetteur ; vente PDV hors ligne synchronisée deux fois sans doublon ; refus carte (hors horaires, produit, bloquée, solde / plafond) ; postes et reste à remettre ; employés, photo, rôles ; rapports ; PC station (autonome : carte + PIN, idempotence, distributeur de gaz) ; Zen Mobility jusqu'au débit de la carte.
 - Tâches planifiées observées en direct : bascule automatique par plage horaire, station hors ligne puis de nouveau en ligne.
+- Docker : `docker compose up -d --build` construit l'API (Dockerfile multi-étapes), démarre la base et crée la démonstration (vérifié le 10 novembre 2026, voir le README).
 - Frontend branché : `npm run build` sans erreur ; les 14 écrans parcourus dans le navigateur avec les données réelles, sans erreur console ; parcours testé à la main : connexion DAF → approbation d'une recharge → carte créditée, flux en direct mis à jour.
 
 À faire ensuite :
-1. Écrans manquants listés ci-dessous (Zen Mobility surtout).
+1. Pistes restantes du frontend listées ci-dessous.
 2. Tests d'intégration automatisés (base PostgreSQL dédiée ou Testcontainers) reprenant les parcours vérifiés à la main.
 3. Envoi réel des emails (serveur SMTP à obtenir) ; jours fériés musulmans à saisir chaque année.
 4. Avant le premier déploiement : figer `V1` / `V2` (ensuite, uniquement des `V3__…`), `JWT_SECRET` de production, sauvegardes PostgreSQL.
 
 ## Manques du frontend (à signaler au coéquipier, ne pas corriger sans demande)
 
-Faits lors du branchement : connexion et jeton (« Rester connecté » = localStorage), menus et boutons selon les droits, file des cartes « à activer » (onglet de l'écran Cartes), case « Accessoires » des permissions, clôture des postes par le chef de poste / gérant (Rapports › Rapports de poste), paliers de validation et planification du résumé email (dans Validations et Rapports).
+Tous les manques relevés à l'origine sont couverts (9 et 10 novembre 2026) : connexion et jeton, menus et boutons selon les droits, file des cartes « à activer », case « Accessoires », clôture des postes (Rapports › Rapports de poste), écran **Zen Mobility** (`#/mobilite` : commandes, affectation, départ, livraison, carte en direct des livreurs avec trajet et destination ; vue « Mes livraisons » pour le livreur), écran **Mon poste** du pompiste / chef de poste (`#/mon-poste` : prise de poste, pause, ventes à la pompe avec prix selon la carte, reste à remettre), écran **Paramètres** (`#/parametres` : tous les paramètres, jours fériés, file des emails), import de stations en CSV (fait côté client, une création d'API par ligne), ajout / modification / suppression des pistolets, modification et ajout des cuves, postes types de la station.
 
-Restent à faire :
-- Écran **Zen Mobility** (commandes ≥ 1 000 L, affectation, suivi) et **carte en direct** des livreurs / stations mobiles (`/api/mobility/*`, `/api/tracking/live`, événements `location`).
-- Écran du **pompiste** pour son propre poste (`/api/shifts/me` : ventes, reste à remettre, pause) et saisie des ventes à la pompe en mode conventionnel (`/api/sales/fuel`).
-- Écran **Paramètres** complet (lien de la barre latérale inactif) : seuils d'alerte, délais en ligne / hors ligne, jours fériés, file des emails.
-- Import de stations (bouton retiré), modification des pistolets et cuves (seul l'état d'un pistolet se change depuis la fiche station).
+Pistes restantes (non demandées) : export PDF des rapports (impression du navigateur pour l'instant), saisie des ventes boutique côté pompiste depuis « Mon poste », carte en direct au niveau du pays pour les stations mobiles hors de Lomé.
 
 ## Données de démonstration
 

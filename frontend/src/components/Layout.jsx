@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import {
   LayoutGrid, Fuel, Store, CreditCard, Wallet, ShieldCheck, ShoppingCart, Users, Building2,
-  FileBarChart, ScrollText, Settings, LogOut, Search, Bell, ChevronDown, Globe, TriangleAlert,
+  FileBarChart, ScrollText, Settings, LogOut, Search, Bell, ChevronDown, Globe, TriangleAlert, Truck, Timer,
 } from 'lucide-react';
 import ZenerLogo from './ZenerLogo.jsx';
 import { Avatar, IcoBox } from './ui.jsx';
@@ -20,6 +20,7 @@ const NAV = [
       { to: '/', label: 'Tableau de bord', icon: LayoutGrid, end: true, rights: null },
       { to: '/stations', label: 'Stations', icon: Fuel, rights: ['STATIONS_GERER', 'STATION_EXPLOITER', 'VENTES_POMPE', 'RAPPORTS'] },
       { to: '/points-de-vente', label: 'Points de vente', icon: Store, rights: ['PDV_GERER', 'PDV_VENDRE', 'PDV_VALIDER'] },
+      { to: '/mobilite', label: 'Zen Mobility', icon: Truck, rights: ['LIVRAISONS', 'LIVRER'] },
     ],
   },
   {
@@ -33,8 +34,11 @@ const NAV = [
   },
   {
     section: 'Commerce',
-    items: [{ to: '/ventes-stocks', label: 'Ventes & stocks', icon: ShoppingCart,
-      rights: ['STOCKS', 'VENTES_BOUTIQUE', 'TRANSACTIONS', 'PRIX', 'VENTES_POMPE'] }],
+    items: [
+      { to: '/mon-poste', label: 'Mon poste', icon: Timer, rights: ['VENTES_POMPE'] },
+      { to: '/ventes-stocks', label: 'Ventes & stocks', icon: ShoppingCart,
+        rights: ['STOCKS', 'VENTES_BOUTIQUE', 'TRANSACTIONS', 'PRIX', 'VENTES_POMPE'] },
+    ],
   },
   {
     section: 'Organisation',
@@ -100,10 +104,12 @@ function Sidebar() {
       </nav>
 
       <div className="sidebar-bottom">
-        <a className="nav-item" href="#/" onClick={(e) => e.preventDefault()} title="Écran à venir">
-          <Settings size={19} strokeWidth={1.7} />
-          Paramètres
-        </a>
+        {can('PARAMETRES', 'JOURNAL') && (
+          <NavLink to="/parametres" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+            <Settings size={19} strokeWidth={1.7} />
+            Paramètres
+          </NavLink>
+        )}
         <div className="sidebar-user">
           <Avatar initials={user?.initials} color={avatarColor(user?.id)} size={38} photo={fileUrl(user?.photoUrl)} />
           <div style={{ minWidth: 0 }}>

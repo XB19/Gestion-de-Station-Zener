@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Fuel, Wifi, ArrowLeftRight, Building2, Plus, Search, Globe, CircleDot, Download } from 'lucide-react';
+import { Fuel, Wifi, ArrowLeftRight, Building2, Plus, Search, Globe, CircleDot, Download, Upload } from 'lucide-react';
 import { PageHeader, Card, Kpi, Badge, StatusBadge, Button, Select, SearchInput, IcoBox, Async, Empty } from '../components/ui.jsx';
 import { FormModal, Field, TextInput, SelectInput, Modal, useToast } from '../components/feedback.jsx';
 import { useApi, useLiveReload } from '../api/hooks.js';
@@ -176,6 +176,102 @@ export function StationFormModal({ station, onClose, onSaved }) {
   );
 }
 
+const IMPORT_COLUMNS = ['nom', 'nom_court', 'type', 'zone', 'pays', 'latitude', 'longitude', 'client', 'adresse'];
+
+function parseCsv(text) {
+  const lines = text.replace(/^\ufeff/, '').split(/\r?\n/).filter((l) => l.trim());
+  if (!lines.length) return [];
+  const sep = lines[0].includes(';') ? ';' : ',';
+  const head = lines[0].split(sep).map((h) => h.trim().toLowerCase());
+  return lines.slice(1).map((l, i) => {
+    const cols = l.split(sep);
+    const row = { line: i + 2 };
+    head.forEach((h, j) => { row[h] = (cols[j] || '').trim(); });
+    return row;
+  });
+}
+
+/** Import de stations depuis un fichier CSV : chaque ligne est créée par l'API (même contrôles que la saisie). */
+function ImportModal({ onClose, onDone }) {
+  const notify = useToast();
+  const clients = useApi('/clients');
+  const [rows, setRows] = useState([]);
+  const [results, setResults] = useState({});
+  const [busy, setBusy] = useState(false);
+  const template = () => {
+    const csv = `${IMPORT_COLUMNS.join(';')}\nZener Lomé Port;Lomé Port;SUCCURSALE;Lomé;Togo;6.1372;1.2861;Groupe Zener;Zone portuaire\n`;
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }));
+    a.download = 'modele_stations.csv';
+    a.click();
+  };
+  const read = (file) => {
+    if (!file) return;
+    file.text().then((t) => {
+      setRows(parseCsv(t));
+      setResults({});
+    });
+  };
+  const run = async () => {
+    setBusy(true);
+    let ok = 0;
+    const res = {};
+    for (const r of rows) {
+      if (results[r.line]?.ok) continue;
+      const client = (clients.data || []).find((c) => c.name.toLowerCase() === (r.client || '').toLowerCase());
+      try {
+        const st = await post('/stations', {
+          name: r.nom, shortName: r.nom_court || r.nom.replace(/^Zener\s+/i, ''), type: (r.type || 'SUCCURSALE').toUpperCase().replace(' ', '_'),
+          kind: 'FIXE', zone: r.zone || null, country: r.pays || 'Togo', address: r.adresse || null,
+          latitude: r.latitude ? Number(r.latitude.replace(',', '.')) : null, longitude: r.longitude ? Number(r.longitude.replace(',', '.')) : null,
+          clientId: client ? client.id : null, hubPorts: 12, readerPort: 'COM9', serialPort: 'COM3', serialBaud: 9600,
+        });
+        res[r.line] = { ok: true, text: `${st.code} · clé ${st.apiKey}` };
+        ok += 1;
+      } catch (e) {
+        res[r.line] = { ok: false, text: e.message };
+      }
+      setResults((x) => ({ ...x, ...res }));
+    }
+    setBusy(false);
+    notify(`${ok} station(s) importée(s)`, ok ? 'success' : 'error');
+    if (ok) onDone();
+  };
+  return (
+    <Modal title="Importer des stations" onClose={onClose} wide footer={
+      <>
+        <button className="btn" onClick={template}><Download size={15} /> Modèle CSV</button>
+        <button className="btn" onClick={onClose}>Fermer</button>
+        <button className="btn btn-primary" disabled={busy || !rows.length} onClick={run}>{busy ? 'Import…' : `Importer ${rows.length} ligne(s)`}</button>
+      </>
+    }>
+      <p className="muted" style={{ marginTop: 0 }}>
+        Colonnes : {IMPORT_COLUMNS.join(' ; ')}. Le client est retrouvé par son nom. La clé du PC station de chaque station créée
+        s’affiche une seule fois ci-dessous : notez-la.
+      </p>
+      <label className="input"><input type="file" accept=".csv" onChange={(e) => read(e.target.files[0])} /></label>
+      {rows.length > 0 && (
+        <table className="table" style={{ marginTop: 12 }}>
+          <thead><tr><th>Ligne</th><th>Station</th><th>Type</th><th>Client</th><th>Résultat</th></tr></thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.line}>
+                <td className="num">{r.line}</td>
+                <td>{r.nom}</td>
+                <td>{r.type}</td>
+                <td>{r.client || '—'}</td>
+                <td style={{ color: results[r.line] ? (results[r.line].ok ? 'var(--green)' : 'var(--red)') : undefined, wordBreak: 'break-all' }}>
+                  {results[r.line]?.text || 'À importer'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </Modal>
+  );
+}
+
 const TYPES = [{ value: 'SUCCURSALE', label: 'Succursale' }, { value: 'GERANCE_LIBRE', label: 'Gérance libre' }];
 const MODES = [{ value: 'CONVENTIONNEL', label: 'Conventionnel' }, { value: 'AUTONOME', label: 'Autonome' }];
 const STATUSES = [{ value: 'EN_LIGNE', label: 'En ligne' }, { value: 'INSTABLE', label: 'Instable' }, { value: 'HORS_LIGNE', label: 'Hors ligne' }];
@@ -187,6 +283,7 @@ export default function Stations() {
   const [q, setQ] = useState('');
   const [filters, setFilters] = useState({ type: '', mode: '', status: '', country: '' });
   const [creating, setCreating] = useState(params.get('new') === '1');
+  const [importing, setImporting] = useState(false);
   const [selected, setSelected] = useState(null);
 
   const summary = useApi('/stations/summary');
@@ -226,6 +323,7 @@ export default function Stations() {
               { label: 'Client', value: 'clientName' }, { label: 'Zone', value: 'zone' }, { label: 'Statut', value: 'statusLabel' },
               { label: 'Mode', value: 'modeLabel' }, { label: 'Recette du jour (F)', value: 'revenueToday' },
             ], rows)}>Exporter</Button>
+            {can('STATIONS_GERER') && <Button icon={Upload} onClick={() => setImporting(true)}>Importer</Button>}
             {can('STATIONS_GERER') && <Button variant="primary" icon={Plus} onClick={() => setCreating(true)}>Nouvelle station</Button>}
           </>
         }
@@ -306,6 +404,7 @@ export default function Stations() {
         </Card>
       </div>
 
+      {importing && <ImportModal onClose={() => setImporting(false)} onDone={reloadAll} />}
       {creating && (
         <StationFormModal
           onClose={() => {

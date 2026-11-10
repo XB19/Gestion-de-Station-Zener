@@ -58,6 +58,9 @@ src/
 | 12 Rapports | `#/rapports` | `Rapports.jsx` |
 | 13 Journal d'opérations | `#/journal` | `Journal.jsx` |
 | 14 Clients & licences | `#/clients` | `Clients.jsx` |
+| Zen Mobility (hors maquettes) | `#/mobilite` | `Mobilite.jsx` |
+| Mon poste (pompiste, chef de poste) | `#/mon-poste` | `MonPoste.jsx` |
+| Paramètres | `#/parametres` | `Parametres.jsx` |
 
 Toutes les données viennent de l'API ; les écrans se mettent à jour en direct grâce au flux temps réel
 (opérations, ventes, pistolets, stations). Les boutons n'apparaissent que si l'utilisateur a le droit
