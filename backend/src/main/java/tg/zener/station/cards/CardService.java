@@ -44,6 +44,35 @@ public class CardService {
     }
 
     /** Numéro sans espaces ni préfixe (« ZN 6011 2847 0093 » → « 601128470093 »). */
+    /**
+     * Recherche partagée par tous les écrans qui demandent une carte : numéro complet (12 chiffres),
+     * 5 derniers chiffres (index card_last5) ou fragment d'au moins 4 chiffres. Espaces ignorés.
+     * L'écran choisit directement la carte s'il n'y a qu'un résultat, sinon il affiche la liste de choix.
+     */
+    public List<Map<String, Object>> search(String q, int limit) {
+        String digits = q == null ? "" : q.replaceAll("[^0-9]", "");
+        if (digits.length() < 4) {
+            throw new ApiException("Saisissez le numéro complet ou les 5 derniers chiffres de la carte");
+        }
+        if (digits.length() > 12) {
+            throw new ApiException("Numéro de carte invalide (12 chiffres au plus)");
+        }
+        String cond = digits.length() == 12 ? "c.number = :q"
+                : digits.length() == 5 ? "right(c.number, 5) = :q"
+                : "c.number LIKE '%' || :q || '%'";
+        List<Map<String, Object>> rows = db.list("""
+                \sSELECT c.id, c.number, c.type_code, ct.label AS type_label, c.status,
+                       CASE c.status WHEN 'ACTIVE' THEN 'Active' WHEN 'BLOQUEE' THEN 'Bloquée' WHEN 'INACTIVE' THEN 'Inactive'
+                                     WHEN 'A_ACTIVER' THEN 'À activer' WHEN 'PDV' THEN 'Au point de vente' ELSE 'En stock' END AS status_label,
+                       c.holder_id, h.name AS holder_name, h.kind AS holder_kind, c.group_id, g.name AS group_name,
+                       c.vehicle_plate, c.vehicle_label, c.driver_name, c.balance
+                FROM card c JOIN card_type ct ON ct.code = c.type_code
+                LEFT JOIN holder h ON h.id = c.holder_id LEFT JOIN card_group g ON g.id = c.group_id
+                WHERE\s""" + cond + " ORDER BY (c.status = 'ACTIVE') DESC, c.number LIMIT :l", Db.p("q", digits, "l", limit));
+        rows.forEach(r -> r.put("numberFormatted", format((String) r.get("number"))));
+        return rows;
+    }
+
     public static String normalize(String number) {
         if (number == null) {
             return null;
@@ -122,8 +151,8 @@ public class CardService {
             refuse(card, ch, "SOLDE_INSUFFISANT", "Solde insuffisant");
         }
         db.update("""
-                \sINSERT INTO card_movement (card_id, kind, amount, balance_after, station_id, sale_id, detail)
-                VALUES (:c, 'VENTE', :a, :b, :s, :sale, :d)""",
+                \sINSERT INTO card_movement (card_id, kind, amount, balance_after, station_id, sale_id, detail, employee_id)
+                VALUES (:c, 'VENTE', :a, :b, :s, :sale, :d, (SELECT employee_id FROM sale WHERE id = :sale))""",
                 Db.p("c", id, "a", -total, "b", balance, "s", ch.stationId(), "sale", saleId, "d", movementDetail));
         card.put("balance", balance);
         return card;

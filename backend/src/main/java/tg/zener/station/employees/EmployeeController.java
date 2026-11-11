@@ -25,6 +25,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
+import tg.zener.station.cards.CardEvents;
 import tg.zener.station.cards.CardIssuer;
 import tg.zener.station.cards.CardService;
 import tg.zener.station.common.ApiException;
@@ -50,13 +51,16 @@ public class EmployeeController {
     private final PhotoStore photos;
     private final CardIssuer issuer;
     private final Journal journal;
+    private final CardEvents cardEvents;
 
-    public EmployeeController(Db db, PasswordEncoder encoder, PhotoStore photos, CardIssuer issuer, Journal journal) {
+    public EmployeeController(Db db, PasswordEncoder encoder, PhotoStore photos, CardIssuer issuer, Journal journal,
+                              CardEvents cardEvents) {
         this.db = db;
         this.encoder = encoder;
         this.photos = photos;
         this.issuer = issuer;
         this.journal = journal;
+        this.cardEvents = cardEvents;
     }
 
     static final String SELECT = """
@@ -94,6 +98,23 @@ public class EmployeeController {
                 "lim", sz, "off", pg * sz);
         List<Map<String, Object>> items = db.list(SELECT + where + " ORDER BY r.sort, e.last_name, e.first_name LIMIT :lim OFFSET :off", p);
         return new Page(items, db.count("SELECT count(*) FROM employee e" + where, p), pg, sz);
+    }
+
+    /**
+     * Opérateurs (liste des filtres « Opérateur » des historiques) : le type d'opérateur est le rôle.
+     * Un utilisateur rattaché à une station ne voit que l'équipe de sa station.
+     */
+    @GetMapping("/operators")
+    @PreAuthorize("isAuthenticated()")
+    public List<Map<String, Object>> operators(@RequestParam(required = false) Long stationId) {
+        Long station = Auth.scopedStation(stationId);
+        return db.list("""
+                \sSELECT e.id, e.first_name || ' ' || e.last_name AS name, e.role_code, r.label AS role_label,
+                       s.short_name AS station_name, e.active,
+                       CASE WHEN e.photo_path IS NULL THEN NULL ELSE '/files/' || e.photo_path END AS photo_url
+                FROM employee e JOIN role r ON r.code = e.role_code LEFT JOIN station s ON s.id = e.station_id
+                WHERE (CAST(:s AS bigint) IS NULL OR e.station_id = :s)
+                ORDER BY e.active DESC, r.sort, e.last_name, e.first_name""", Db.p("s", station));
     }
 
     /** Indicateurs : nombre d'employés actifs, par rôle, nombre de stations couvertes. */
@@ -263,10 +284,12 @@ public class EmployeeController {
         db.update("UPDATE employee SET active = false WHERE id = :id", Db.p("id", id));
         db.update("UPDATE station SET manager_id = NULL WHERE manager_id = :id", Db.p("id", id));
         // la carte employé ne doit plus servir
-        db.update("""
+        for (Map<String, Object> c : db.list("""
                 \sUPDATE card SET status = 'BLOQUEE', blocked_reason = 'Employé désactivé'
-                WHERE status IN ('ACTIVE', 'A_ACTIVER') AND holder_id = (SELECT id FROM holder WHERE employee_id = :id)""",
-                Db.p("id", id));
+                WHERE status IN ('ACTIVE', 'A_ACTIVER') AND holder_id = (SELECT id FROM holder WHERE employee_id = :id)
+                RETURNING id""", Db.p("id", id))) {
+            cardEvents.record(((Number) c.get("id")).longValue(), CardEvents.BLOCAGE, "Employé désactivé", num(e.get("stationId")), null);
+        }
         journal.log("EMPLOYE_DESACTIVE", Journal.MODIFICATIONS, "Employé désactivé", (String) e.get("name"), null,
                 num(e.get("stationId")), null);
         return get(id);
@@ -355,8 +378,13 @@ public class EmployeeController {
             db.update("UPDATE holder SET name = :n, profile = :p WHERE id = :h", Db.p("h", holderId, "n", e.get("name"), "p", profile));
         }
         // une ancienne carte bloquée est retirée définitivement
-        db.update("UPDATE card SET status = 'INACTIVE' WHERE holder_id = :h AND status = 'BLOQUEE'", Db.p("h", holderId));
+        for (Map<String, Object> c : db.list(
+                "UPDATE card SET status = 'INACTIVE' WHERE holder_id = :h AND status = 'BLOQUEE' RETURNING id", Db.p("h", holderId))) {
+            cardEvents.record(((Number) c.get("id")).longValue(), CardEvents.DESACTIVATION, "Remplacée par une nouvelle carte employé",
+                    num(e.get("stationId")), null);
+        }
         long cardId = issuer.issue(form.number(), "EMPLOYE", form.techno(), holderId, null, u.id(), blank(form.pin()));
+        cardEvents.record(cardId, CardEvents.EMISSION, "Carte employé · " + e.get("name"), num(e.get("stationId")), null);
         String number = db.value("SELECT number FROM card WHERE id = :c", Db.p("c", cardId), String.class);
         journal.log("CARTE_EMPLOYE", Journal.VENTES_CARTES, "Carte employé créée · à activer",
                 CardService.mask(number) + " · " + e.get("name"), null, num(e.get("stationId")), null);

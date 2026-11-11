@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Download, FileSpreadsheet, FileText, Search, X, CreditCard, Building2, User, Calendar, Fuel, Store, Package, Layers,
+  Download, FileSpreadsheet, FileText, X, Building2, User, Calendar, Fuel, Store, Package, Layers,
   Timer, Database, ChevronDown,
 } from 'lucide-react';
 import { PageHeader, Card, Badge, Button, Select, Async, Empty, Pager } from '../components/ui.jsx';
+import CardPicker from '../components/CardPicker.jsx';
 import { useToast } from '../components/feedback.jsx';
 import { useApi } from '../api/hooks.js';
 import { api, download, qs } from '../api/client.js';
@@ -74,7 +75,7 @@ function Chip({ icon: Icon, children, onClear }) {
 }
 
 /** Champ de recherche avec liste de choix (cartes, clients, opérateurs). */
-function Picker({ icon: Icon, placeholder, width = 220, search, render, onPick, minLength = 2, submitOnly, hint }) {
+function Picker({ icon: Icon, placeholder, width = 220, search, render, onPick, minLength = 2, hint }) {
   const [q, setQ] = useState('');
   const [items, setItems] = useState(null);
   const [error, setError] = useState(null);
@@ -87,7 +88,6 @@ function Picker({ icon: Icon, placeholder, width = 220, search, render, onPick, 
       const r = await search(value);
       if (n !== seq.current) return;
       setError(null);
-      if (submitOnly && r.length === 1) { onPick(r[0]); setQ(''); setItems(null); return; }
       setItems(r);
     } catch (e) {
       if (n === seq.current) { setItems(null); setError(e.message); }
@@ -95,7 +95,6 @@ function Picker({ icon: Icon, placeholder, width = 220, search, render, onPick, 
   };
 
   useEffect(() => {
-    if (submitOnly) return undefined;
     if (q.trim().length < minLength) { setItems(null); return undefined; }
     const t = setTimeout(() => run(q.trim()), 250);
     return () => clearTimeout(t);
@@ -112,17 +111,11 @@ function Picker({ icon: Icon, placeholder, width = 220, search, render, onPick, 
       <label className="input" style={{ height: 38 }} title={hint}>
         <Icon size={16} strokeWidth={1.8} />
         <input placeholder={placeholder} value={q} onChange={(e) => { setQ(e.target.value); setError(null); }} />
-        {submitOnly && <button type="submit" className="link-more" title="Chercher"><Search size={15} /></button>}
       </label>
       {(items || error) && (
         <div className="dropdown" style={{ left: 0, right: 'auto', width: Math.max(width, 320) }}>
           {error && <div className="muted" style={{ padding: '10px 12px', color: 'var(--red)' }}>{error}</div>}
           {items && items.length === 0 && <div className="muted" style={{ padding: '10px 12px' }}>Aucun résultat</div>}
-          {items && items.length > 1 && submitOnly && (
-            <div className="dd-section">
-              {items.length >= 30 ? '30 premières cartes · précisez le numéro' : `${items.length} cartes correspondent · choisissez`}
-            </div>
-          )}
           {items && items.map((it) => (
             <button key={it.id} type="button" className="dd-item" onClick={() => { onPick(it); setQ(''); setItems(null); }}>
               {render(it)}
@@ -156,22 +149,10 @@ function Filters({ supported, f, setF, options, scoped }) {
           </label>
         </span>
       )}
-      {has('card') && (f.card ? (
-        <Chip icon={CreditCard} onClear={() => set({ card: null })}>{f.card.numberFormatted}{f.card.holderName ? ` · ${f.card.holderName}` : ''}</Chip>
-      ) : (
-        <Picker icon={CreditCard} placeholder="Carte : n° ou 5 derniers chiffres" width={250} submitOnly
-          hint="Numéro complet (12 chiffres), 5 derniers chiffres ou fragment, puis Entrée"
-          search={(q) => api(`/extractions/cards${qs({ q })}`)}
-          onPick={(c) => set({ card: c })}
-          render={(c) => (
-            <span style={{ minWidth: 0 }}>
-              <span className="strong num">{c.numberFormatted}</span> <Badge tone="gray">{c.typeLabel}</Badge>
-              <span className="muted" style={{ display: 'block', fontSize: 12.5 }}>
-                {[c.holderName || 'Sans titulaire', c.groupName, c.vehiclePlate].filter(Boolean).join(' · ')} · solde {fcfa(c.balance)} F
-              </span>
-            </span>
-          )} />
-      ))}
+      {has('card') && (
+        <CardPicker compact value={f.card} onChange={(c) => set({ card: c })} width={270} height={38}
+          placeholder="Carte : n° ou 5 derniers chiffres" />
+      )}
       {has('holder') && (f.holder ? (
         <Chip icon={Building2} onClear={() => set({ holder: null, groupId: '' })}>{f.holder.name}</Chip>
       ) : (

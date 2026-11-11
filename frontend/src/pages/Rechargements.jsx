@@ -4,6 +4,8 @@ import {
   History, Wallet, Send, FileSpreadsheet, Download, Upload, Check, CircleCheck, CircleX, Smartphone, Search,
 } from 'lucide-react';
 import { PageHeader, Card, Badge, StatusBadge, Button, Segmented, Checkbox, KV, Async, Empty, Pager } from '../components/ui.jsx';
+import CardPicker from '../components/CardPicker.jsx';
+import OperatorSelect from '../components/OperatorSelect.jsx';
 import { useToast } from '../components/feedback.jsx';
 import { useApi, useLiveReload } from '../api/hooks.js';
 import { api, download, post, put, qs } from '../api/client.js';
@@ -76,7 +78,6 @@ function AmountPicker({ value, onChange }) {
 /** Recharge unitaire au guichet. */
 function UnitRecharge({ initialCard, threshold, onDone }) {
   const notify = useToast();
-  const [number, setNumber] = useState(initialCard || '');
   const [card, setCard] = useState(null);
   const [error, setError] = useState(null);
   const [amount, setAmount] = useState(25000);
@@ -84,10 +85,9 @@ function UnitRecharge({ initialCard, threshold, onDone }) {
   const [ref, setRef] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const lookup = async (n = number) => {
+  const lookup = async (n = card?.number) => {
     setError(null);
-    setCard(null);
-    if (n.replace(/\D/g, '').length !== 12) return;
+    if (!n || n.replace(/\D/g, '').length !== 12) return;
     try {
       setCard(await api(`/cards/lookup/${n.replace(/\D/g, '')}`));
     } catch (e) {
@@ -102,7 +102,7 @@ function UnitRecharge({ initialCard, threshold, onDone }) {
     e.preventDefault();
     setBusy(true);
     try {
-      const r = await post('/recharges', { cardNumber: number, amount, paymentMethod: payment, paymentRef: ref || null });
+      const r = await post('/recharges', { cardNumber: card.number, amount, paymentMethod: payment, paymentRef: ref || null });
       notify(r.status === 'CREDITEE' ? `Carte créditée de ${money(amount)}` : `Au-dessus du palier : demande de validation envoyée (${money(amount)})`,
         r.status === 'CREDITEE' ? 'success' : 'info');
       lookup();
@@ -120,26 +120,10 @@ function UnitRecharge({ initialCard, threshold, onDone }) {
       <div className="card-sub">Au guichet · au-dessus de {fcfa(threshold)} F la recharge part en validation</div>
       <form onSubmit={submit}>
         <label className="field-label" style={{ marginTop: 18 }}>N° de carte</label>
-        <div className="row" style={{ gap: 10 }}>
-          <label className="input" style={{ height: 44, flex: 1 }}>
-            <input className="num strong" value={number} onChange={(e) => setNumber(e.target.value)} onBlur={() => lookup()} placeholder="6011 2847 0093" required />
-          </label>
-          <Button type="button" icon={Search} onClick={() => lookup()}>Vérifier</Button>
-        </div>
+        {/* numéro complet ou 5 derniers chiffres ; liste de choix si plusieurs cartes correspondent */}
+        <CardPicker value={card} onChange={(c) => (c ? lookup(c.number) : setCard(null))} height={44} />
         {error && <div className="form-error">{error}</div>}
-        {card && (
-          <div className="row" style={{ gap: 16, background: 'var(--surface-2)', borderRadius: 10, padding: '12px 16px', marginTop: 12 }}>
-            <div style={{ flex: 1 }}>
-              <div className="strong">{card.holderName}</div>
-              <div className="muted" style={{ fontSize: 13 }}>{card.typeLabel} · {card.groupName || card.holderKind?.toLowerCase()}</div>
-            </div>
-            <StatusBadge status={card.statusLabel} />
-            <div style={{ textAlign: 'right' }}>
-              <div className="muted" style={{ fontSize: 12 }}>Solde</div>
-              <div className="strong num">{money(card.balance)}</div>
-            </div>
-          </div>
-        )}
+        {card && card.status !== 'ACTIVE' && <Badge tone="red" style={{ marginTop: 10 }}>Carte {card.statusLabel?.toLowerCase()} : recharge impossible</Badge>}
         <label className="field-label" style={{ marginTop: 16 }}>Montant</label>
         <AmountPicker value={amount} onChange={setAmount} />
         {amount > threshold && <Badge tone="orange" style={{ marginTop: 10 }}>Au-dessus du palier : validation Comptable{card?.holderKind === 'ENTREPRISE' ? ' puis DAF' : ''}</Badge>}
@@ -403,7 +387,8 @@ export default function Rechargements() {
   const { can } = useSession();
   const [mode, setMode] = useState(params.get('mode') === 'masse' ? 'En masse' : 'Recharge unitaire');
   const [page, setPage] = useState(0);
-  const history = useApi(`/recharges?page=${page}&size=10`);
+  const [operator, setOperator] = useState('');
+  const history = useApi(`/recharges${qs({ employeeId: operator, page, size: 10 })}`);
   const settings = useApi('/settings');
   const historyRef = useRef(null);
   useLiveReload(history.reload, ['operation'], 4000);
@@ -455,14 +440,14 @@ export default function Rechargements() {
       <Card style={{ marginTop: 20 }}>
         <div className="card-head" style={{ paddingBottom: 14, alignItems: 'center' }}>
           <div className="card-title">Historique des recharges</div>
-          <span className="muted" style={{ fontSize: 13 }}>Mise à jour en direct</span>
+          <OperatorSelect value={operator} onChange={(v) => { setOperator(v); setPage(0); }} />
         </div>
         <Async state={history}>
           {(data) => (data.items.length === 0 ? <Empty>Aucune recharge</Empty> : (
             <>
               <div className="table-wrap"><table className="table">
                 <thead>
-                  <tr><th>Réf.</th><th>Quand</th><th>Carte</th><th>Titulaire</th><th className="r">Montant (F)</th><th>Canal · paiement</th><th>Par · lieu</th><th>Statut</th></tr>
+                  <tr><th>Réf.</th><th>Quand</th><th>Carte</th><th>Titulaire</th><th className="r">Montant (F)</th><th>Canal · paiement</th><th>Opérateur</th><th>Lieu</th><th>Statut</th></tr>
                 </thead>
                 <tbody>
                   {data.items.map((r) => (
@@ -473,7 +458,8 @@ export default function Rechargements() {
                       <td>{r.holderName}</td>
                       <td className="r num strong">{fcfa(r.amount)}</td>
                       <td>{{ UNITAIRE: 'Guichet', DISTANCE: 'À distance', MASSE: 'En masse' }[r.channel]} · {PAYMENT_LABELS[r.paymentMethod]}</td>
-                      <td className="muted">{[r.requestedByName, r.place].filter(Boolean).join(' · ')}</td>
+                      <td>{r.requestedByName}</td>
+                      <td className="muted">{r.place}</td>
                       <td><StatusBadge status={{ CREDITEE: 'Créditée', EN_VALIDATION: 'En validation', REFUSEE: 'Refusée' }[r.status]} /></td>
                     </tr>
                   ))}

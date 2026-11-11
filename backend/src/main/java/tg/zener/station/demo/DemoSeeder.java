@@ -32,6 +32,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import tg.zener.station.cards.CardEvents;
 import tg.zener.station.cards.CardIssuer;
 import tg.zener.station.common.Db;
 import tg.zener.station.common.Refs;
@@ -167,6 +168,7 @@ public class DemoSeeder {
     private final UserLoader users;
     private final DemoSimulator simulator;
     private final DemoAvatars avatars;
+    private final CardEvents cardEvents;
     private final TransactionTemplate tx;
     private final boolean enabled;
 
@@ -194,7 +196,7 @@ public class DemoSeeder {
 
     public DemoSeeder(Db db, PasswordEncoder encoder, CardIssuer issuer, Refs refs, Settings settings,
                       RechargeService rechargeService, ValidationService validations, ThresholdService thresholds,
-                      ReportService reports, UserLoader users, DemoSimulator simulator, DemoAvatars avatars,
+                      ReportService reports, UserLoader users, DemoSimulator simulator, DemoAvatars avatars, CardEvents cardEvents,
                       PlatformTransactionManager tm,
                       @Value("${app.demo-data}") boolean enabled) {
         this.db = db;
@@ -209,6 +211,7 @@ public class DemoSeeder {
         this.users = users;
         this.simulator = simulator;
         this.avatars = avatars;
+        this.cardEvents = cardEvents;
         this.tx = new TransactionTemplate(tm);
         this.enabled = enabled;
     }
@@ -226,6 +229,7 @@ public class DemoSeeder {
                 log.info("Données de démonstration : base déjà remplie, rien à faire");
             }
             avatars.ensureAll();
+            cardEvents.backfill();
             simulator.start();
             return;
         }
@@ -250,6 +254,7 @@ public class DemoSeeder {
         log.info("Données de démonstration créées en {} s · connexion : ama.kpodar@zener.tg / {}",
                 (System.currentTimeMillis() - t0) / 1000, PASSWORD);
         avatars.ensureAll();
+        cardEvents.backfill();
         simulator.start();
     }
 
@@ -1121,6 +1126,11 @@ public class DemoSeeder {
         db.jdbc().batchUpdate("""
                 \sINSERT INTO card_movement (card_id, at, kind, amount, balance_after, station_id, sale_id, recharge_id, detail)
                 VALUES (:c, :at, :k, :a, :b, :s, :sale, :r, :d)""", moves.toArray(SqlParameterSource[]::new));
+        // opérateur de chaque mouvement : vendeur ou auteur de la recharge
+        db.update("UPDATE card_movement m SET employee_id = x.employee_id FROM sale x WHERE x.id = m.sale_id AND m.employee_id IS NULL",
+                Map.of());
+        db.update("UPDATE card_movement m SET employee_id = r.requested_by FROM recharge r WHERE r.id = m.recharge_id AND m.employee_id IS NULL",
+                Map.of());
     }
 
     /** Sorties de stock agrégées par jour (cuves et articles) : base du calcul des seuils automatiques. */

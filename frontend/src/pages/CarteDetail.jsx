@@ -10,7 +10,7 @@ import { FormModal, Field, TextInput, SelectInput, useToast } from '../component
 import { useApi, useLiveReload } from '../api/hooks.js';
 import { post, put } from '../api/client.js';
 import { useSession } from '../api/session.jsx';
-import { dateTime, fcfa, hhmm, longDate, masked, money, shortName, signed } from '../lib/format.js';
+import { dateTime, fcfa, hhmm, longDate, masked, money, signed } from '../lib/format.js';
 
 const PRODUCTS = [
   { code: 'SUPER', name: 'Super', icon: Fuel, color: 'var(--primary)' },
@@ -27,6 +27,7 @@ const expiry = (d) => (d ? `${String(d).slice(5, 7)}/${String(d).slice(2, 4)}` :
 
 function operationLabel(o) {
   if (o.kind === 'REFUS') return `Refus · ${o.detail || ''}`;
+  if (o.kind === 'EVENEMENT') return o.detail;
   if (o.kind === 'RECHARGE') {
     const c = { DISTANCE: 'à distance', MASSE: 'en masse', UNITAIRE: 'au guichet' }[o.channel] || '';
     return `Recharge ${c}`.trim();
@@ -36,9 +37,7 @@ function operationLabel(o) {
 }
 
 function operationDetail(o) {
-  if (o.kind === 'VENTE') {
-    return [o.pumpCode, o.mode === 'AUTONOME' ? 'Autonome' : o.employeeName ? shortName(o.employeeName) : null].filter(Boolean).join(' · ') || '—';
-  }
+  if (o.kind === 'VENTE') return [o.pumpCode, o.mode === 'AUTONOME' ? 'Autonome' : null].filter(Boolean).join(' · ') || '—';
   if (o.kind === 'RECHARGE') return [o.rechargeRef, o.validationStatus === 'APPROUVEE' ? 'validée' : null].filter(Boolean).join(' · ') || '—';
   return '—';
 }
@@ -430,25 +429,26 @@ export default function CarteDetail() {
                 <Card>
                   <div className="card-head" style={{ paddingBottom: 14, alignItems: 'center' }}>
                     <div className="card-title">Opérations</div>
-                    <span className="muted" style={{ fontSize: 13 }}>Ventes, recharges et refus</span>
+                    <span className="muted" style={{ fontSize: 13 }}>Ventes, recharges, refus et opérations sur la carte, avec l'opérateur</span>
                   </div>
                   <Async state={ops}>
                     {(data) => (data.items.length === 0 ? <Empty>Aucune opération</Empty> : (
                       <>
                         <div className="table-wrap"><table className="table">
                           <thead>
-                            <tr><th>Date</th><th>Opération</th><th>Station</th><th className="r">Montant (F)</th><th className="r">Solde</th><th>Détail</th></tr>
+                            <tr><th>Date</th><th>Opération</th><th>Station</th><th className="r">Montant (F)</th><th className="r">Solde</th><th>Opérateur</th><th>Détail</th></tr>
                           </thead>
                           <tbody>
                             {data.items.map((o, i) => (
                               <tr key={`${o.at}-${i}`}>
                                 <td className="muted num">{dateTime(o.at)}</td>
-                                <td className="strong" style={{ color: o.kind === 'REFUS' ? 'var(--red)' : undefined }}>{operationLabel(o)}</td>
+                                <td className="strong" style={{ color: o.kind === 'REFUS' ? 'var(--red)' : o.kind === 'EVENEMENT' ? 'var(--navy-700)' : undefined }}>{operationLabel(o)}</td>
                                 <td>{o.stationName || (o.kind === 'RECHARGE' ? 'À distance' : '—')}</td>
                                 <td className="r num strong" style={{ color: o.amount > 0 ? 'var(--green)' : o.kind === 'REFUS' ? 'var(--red)' : undefined }}>
-                                  {signed(o.amount)}
+                                  {o.kind === 'EVENEMENT' ? '' : signed(o.amount)}
                                 </td>
                                 <td className="r num muted">{o.balanceAfter != null ? fcfa(o.balanceAfter) : '—'}</td>
+                                <td>{o.employeeName || (o.mode === 'AUTONOME' ? 'Libre-service' : '—')}</td>
                                 <td className="muted">{operationDetail(o)}</td>
                               </tr>
                             ))}

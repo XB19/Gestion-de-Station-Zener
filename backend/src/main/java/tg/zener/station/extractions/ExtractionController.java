@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
+import tg.zener.station.cards.CardService;
 import tg.zener.station.common.ApiException;
 import tg.zener.station.common.Db;
 import tg.zener.station.journal.Journal;
@@ -38,12 +39,14 @@ public class ExtractionController {
     private final ExtractionService service;
     private final Journal journal;
     private final Db db;
+    private final CardService cards;
 
-    public ExtractionController(ExtractionCatalog catalog, ExtractionService service, Journal journal, Db db) {
+    public ExtractionController(ExtractionCatalog catalog, ExtractionService service, Journal journal, Db db, CardService cards) {
         this.catalog = catalog;
         this.service = service;
         this.journal = journal;
         this.db = db;
+        this.cards = cards;
     }
 
     /** Catalogue : rubriques, extractions, colonnes et filtres acceptés. */
@@ -124,7 +127,7 @@ public class ExtractionController {
     /** Cartes par numéro complet, 5 derniers chiffres ou fragment : liste de choix si plusieurs correspondent. */
     @GetMapping("/cards")
     public List<Map<String, Object>> cards(@RequestParam String q) {
-        return service.searchCards(q);
+        return cards.search(q, 30);
     }
 
     @GetMapping("/holders")

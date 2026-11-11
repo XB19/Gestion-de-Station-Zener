@@ -56,19 +56,21 @@ public class RechargeController {
     @GetMapping
     @PreAuthorize("hasAuthority('RECHARGER') or hasAuthority('TRANSACTIONS')")
     public Page history(@RequestParam(required = false) String status, @RequestParam(required = false) String channel,
-                        @RequestParam(required = false) Long cardId, @RequestParam(required = false) Integer page,
-                        @RequestParam(required = false) Integer size) {
+                        @RequestParam(required = false) Long cardId, @RequestParam(required = false) Long employeeId,
+                        @RequestParam(required = false) Integer page, @RequestParam(required = false) Integer size) {
         Long scope = Auth.scopedStation(null);
         String where = """
                  \sWHERE (CAST(:st AS text) IS NULL OR r.status = :st) AND (CAST(:ch AS text) IS NULL OR r.channel = :ch)
-                   AND (CAST(:c AS bigint) IS NULL OR r.card_id = :c) AND (CAST(:scope AS bigint) IS NULL OR r.station_id = :scope)""";
+                   AND (CAST(:c AS bigint) IS NULL OR r.card_id = :c) AND (CAST(:scope AS bigint) IS NULL OR r.station_id = :scope)
+                   AND (CAST(:e AS bigint) IS NULL OR r.requested_by = :e)""";
         int sz = Page.size(size);
         int pg = Page.page(page);
-        Map<String, Object> p = Db.p("st", status, "ch", channel, "c", cardId, "scope", scope, "lim", sz, "off", pg * sz);
+        Map<String, Object> p = Db.p("st", status, "ch", channel, "c", cardId, "scope", scope, "e", employeeId, "lim", sz,
+                "off", pg * sz);
         List<Map<String, Object>> items = db.list("""
                 \sSELECT r.id, r.ref, r.amount, r.channel, r.payment_method, r.payment_ref, r.status, r.created_at, r.credited_at,
                        c.number, h.name AS holder_name, v.ref AS validation_ref,
-                       e.first_name || ' ' || e.last_name AS requested_by_name,
+                       e.first_name || ' ' || e.last_name AS requested_by_name, r.requested_by,
                        COALESCE(pv.name, s.short_name, 'Siège') AS place
                 FROM recharge r JOIN card c ON c.id = r.card_id LEFT JOIN holder h ON h.id = c.holder_id
                 LEFT JOIN validation_request v ON v.id = r.validation_id

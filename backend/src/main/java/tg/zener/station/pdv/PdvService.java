@@ -10,6 +10,7 @@ import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import tg.zener.station.cards.CardEvents;
 import tg.zener.station.cards.CardIssuer;
 import tg.zener.station.cards.CardService;
 import tg.zener.station.common.ApiException;
@@ -36,12 +37,14 @@ public class PdvService {
     private final CardIssuer issuer;
     private final SaleService sales;
     private final Journal journal;
+    private final CardEvents cardEvents;
 
-    public PdvService(Db db, CardIssuer issuer, SaleService sales, Journal journal) {
+    public PdvService(Db db, CardIssuer issuer, SaleService sales, Journal journal, CardEvents cardEvents) {
         this.db = db;
         this.issuer = issuer;
         this.sales = sales;
         this.journal = journal;
+        this.cardEvents = cardEvents;
     }
 
     /** Vente d'une nouvelle carte : la carte doit avoir été attribuée à ce point de vente. */
@@ -102,6 +105,8 @@ public class PdvService {
                 WHERE id = :id""",
                 Db.p("id", cardId, "u", agent.id(), "p", pdvId, "at", s.at() == null ? null : java.sql.Timestamp.from(s.at())));
         db.update("UPDATE pdv_card SET sold_at = now() WHERE pdv_id = :p AND card_id = :c", Db.p("p", pdvId, "c", cardId));
+        cardEvents.recordAs(agent.id(), cardId, CardEvents.VENTE_PDV,
+                ("MOBILE_MONEY".equals(s.paymentMethod()) ? "Mobile money" : "Espèces") + (synced ? " · synchronisée" : ""), null, pdvId);
         db.update("UPDATE pdv SET last_sync_at = now() WHERE id = :p", Db.p("p", pdvId));
         return sale;
     }

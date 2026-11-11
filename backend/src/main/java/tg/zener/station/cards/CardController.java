@@ -64,13 +64,15 @@ public class CardController {
     private final CardIssuer issuer;
     private final Settings settings;
     private final Journal journal;
+    private final CardEvents events;
 
-    public CardController(Db db, CardService cards, CardIssuer issuer, Settings settings, Journal journal) {
+    public CardController(Db db, CardService cards, CardIssuer issuer, Settings settings, Journal journal, CardEvents events) {
         this.db = db;
         this.cards = cards;
         this.issuer = issuer;
         this.settings = settings;
         this.journal = journal;
+        this.events = events;
     }
 
     private static Map<String, Object> decorate(Map<String, Object> c) {
@@ -140,6 +142,13 @@ public class CardController {
     }
 
     /** Consultation rapide par numéro (saisi ou lu par le lecteur) : dernières informations de la carte. */
+    /** Recherche par numéro complet, 5 derniers chiffres ou fragment : une carte, ou la liste de choix. */
+    @GetMapping("/search")
+    @PreAuthorize("isAuthenticated()")
+    public List<Map<String, Object>> search(@RequestParam String q) {
+        return cards.search(q, 30);
+    }
+
     @GetMapping("/lookup/{number}")
     public Map<String, Object> lookup(@PathVariable String number) {
         Map<String, Object> c = db.one(LIST_SELECT + " WHERE c.number = :n", Db.p("n", CardService.normalize(number)));
@@ -192,18 +201,24 @@ public class CardController {
         String union = """
                 \sSELECT m.at, m.kind, m.amount, m.balance_after, m.detail, s.short_name AS station_name, m.station_id,
                        x.pump_id, pu.code AS pump_code, x.mode, e.first_name || ' ' || e.last_name AS employee_name,
-                       r.channel, r.ref AS recharge_ref, vr.status AS validation_status
+                       r.channel, r.ref AS recharge_ref, vr.status AS validation_status, m.employee_id
                 FROM card_movement m
                 LEFT JOIN station s ON s.id = m.station_id
                 LEFT JOIN sale x ON x.id = m.sale_id
                 LEFT JOIN pump pu ON pu.id = x.pump_id
-                LEFT JOIN employee e ON e.id = x.employee_id
+                LEFT JOIN employee e ON e.id = m.employee_id
                 LEFT JOIN recharge r ON r.id = m.recharge_id
                 LEFT JOIN validation_request vr ON vr.id = r.validation_id
                 WHERE m.card_id = :id
                 UNION ALL
-                SELECT f.at, 'REFUS', 0, NULL, f.detail, s.short_name, f.station_id, NULL, NULL, NULL, NULL, NULL, NULL, NULL
-                FROM card_refusal f LEFT JOIN station s ON s.id = f.station_id WHERE f.card_id = :id""";
+                SELECT f.at, 'REFUS', 0, NULL, f.detail, s.short_name, f.station_id, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+                FROM card_refusal f LEFT JOIN station s ON s.id = f.station_id WHERE f.card_id = :id
+                UNION ALL
+                SELECT ce.at, 'EVENEMENT', 0, NULL,""" + CardEvents.LABEL_SQL + """
+                 \s|| COALESCE(' · ' || ce.detail, ''), COALESCE(es.short_name, epv.name), ce.station_id, NULL, NULL, NULL,
+                       ee.first_name || ' ' || ee.last_name, NULL, NULL, NULL, ce.employee_id
+                FROM card_event ce LEFT JOIN station es ON es.id = ce.station_id LEFT JOIN pdv epv ON epv.id = ce.pdv_id
+                LEFT JOIN employee ee ON ee.id = ce.employee_id WHERE ce.card_id = :id""";
         Map<String, Object> p = Db.p("id", id, "lim", sz, "off", pg * sz);
         return new Page(db.list(union + " ORDER BY at DESC LIMIT :lim OFFSET :off", p),
                 db.count("SELECT count(*) FROM (" + union + ") u", p), pg, sz);
@@ -245,6 +260,7 @@ public class CardController {
                        expires_on = COALESCE(:e, expires_on) WHERE id = :id""",
                 Db.p("id", id, "vp", f.vehiclePlate(), "vl", f.vehicleLabel(), "d", f.driverName(), "e", f.expiresOn()));
         Map<String, Object> c = get(id);
+        events.record(id, CardEvents.EMISSION, c.get("typeLabel") + " · " + h.get("name"), u.stationId(), null);
         journal.log("CARTE_CREEE", Journal.VENTES_CARTES, "Carte créée · à activer",
                 CardService.mask((String) c.get("number")) + " · " + h.get("name"), null, u.stationId(), null);
         return c;
@@ -298,6 +314,8 @@ public class CardController {
                        expires_on = COALESCE(:e, expires_on) WHERE id = :id""",
                 Db.p("id", id, "g", f.groupId(), "vp", f.vehiclePlate(), "vl", f.vehicleLabel(), "d", f.driverName(),
                         "e", f.expiresOn()));
+        events.record(id, CardEvents.MODIFICATION, String.join(" · ", java.util.stream.Stream.of(f.vehiclePlate(), f.vehicleLabel(),
+                f.driverName()).filter(Objects::nonNull).toList()), Auth.user().stationId(), null);
         journal.log("CARTE_MODIFIEE", Journal.MODIFICATIONS, "Carte modifiée", CardService.mask((String) c.get("number")),
                 null, null, null);
         return get(id);
@@ -336,6 +354,8 @@ public class CardController {
                         "tl", f.perTxLimit(), "d", db.array("smallint", days.toArray()), "tf", f.timeFrom(), "tt", f.timeTo(),
                         "st", f.stationIds() == null ? null : db.array("bigint", f.stationIds().toArray()),
                         "au", f.autonomousAllowed(), "u", Auth.user().id()));
+        String change = changes(before, f);
+        events.record(id, CardEvents.PERMISSIONS, change.isEmpty() ? null : change.substring(3), Auth.user().stationId(), null);
         journal.log("PERMISSIONS", Journal.MODIFICATIONS, "Permissions modifiées",
                 "Carte " + CardService.mask((String) c.get("number")) + changes(before, f), null, Auth.user().stationId(), null);
         return get(id);
@@ -385,6 +405,7 @@ public class CardController {
         }
         db.update("UPDATE card SET status = 'ACTIVE', activated_by = :u, activated_at = now() WHERE id = :id",
                 Db.p("id", id, "u", u.id()));
+        events.record(id, CardEvents.ACTIVATION, null, u.stationId(), null);
         journal.log("CARTE_ACTIVEE", Journal.VENTES_CARTES, "Carte activée", CardService.mask((String) c.get("number")),
                 null, u.stationId(), null);
         return get(id);
@@ -401,6 +422,7 @@ public class CardController {
         }
         String reason = f == null || f.reason() == null || f.reason().isBlank() ? "Bloquée par " + Auth.user().name() : f.reason().trim();
         db.update("UPDATE card SET status = 'BLOQUEE', blocked_reason = :r WHERE id = :id", Db.p("id", id, "r", reason));
+        events.record(id, CardEvents.BLOCAGE, reason, Auth.user().stationId(), null);
         journal.log("CARTE_BLOQUEE", Journal.MODIFICATIONS, "Carte bloquée",
                 CardService.mask((String) c.get("number")) + " · " + reason, null, Auth.user().stationId(), null);
         return get(id);
@@ -417,6 +439,7 @@ public class CardController {
         db.update("""
                 \sUPDATE card SET status = 'A_ACTIVER', blocked_reason = NULL, issued_by = :u, activated_by = NULL, activated_at = NULL
                 WHERE id = :id""", Db.p("id", id, "u", Auth.user().id()));
+        events.record(id, CardEvents.DEBLOCAGE, "À réactiver par une autre personne", Auth.user().stationId(), null);
         journal.log("CARTE_DEBLOQUEE", Journal.MODIFICATIONS, "Carte débloquée · à réactiver",
                 CardService.mask((String) c.get("number")), null, Auth.user().stationId(), null);
         return get(id);
@@ -429,6 +452,7 @@ public class CardController {
     public Map<String, Object> setPin(@PathVariable long id, @Valid @RequestBody PinForm f) {
         Map<String, Object> c = db.require("SELECT number FROM card WHERE id = :id", Db.p("id", id), "Carte introuvable");
         db.update("UPDATE card SET pin_hash = :h WHERE id = :id", Db.p("id", id, "h", issuer.hashPin(f.pin())));
+        events.record(id, CardEvents.PIN, "Code PIN modifié", Auth.user().stationId(), null);
         journal.log("PIN_CARTE", Journal.MODIFICATIONS, "Code PIN modifié", CardService.mask((String) c.get("number")),
                 null, Auth.user().stationId(), null);
         return Map.of("ok", true);

@@ -109,7 +109,7 @@ public class ExtractionCatalog {
                         LEFT JOIN recharge r ON r.id = m.recharge_id
                         LEFT JOIN station st ON st.id = COALESCE(x.station_id, m.station_id, r.station_id)
                         LEFT JOIN pdv pv ON pv.id = COALESCE(x.pdv_id, r.pdv_id)
-                        LEFT JOIN employee e ON e.id = COALESCE(x.employee_id, r.requested_by)
+                        LEFT JOIN employee e ON e.id = m.employee_id
                         LEFT JOIN employee_shift es ON es.id = x.employee_shift_id
                         LEFT JOIN shift_config sc ON sc.id = es.config_id""")
                 .orderBy("m.at DESC, m.id DESC, l.id")
@@ -120,7 +120,7 @@ public class ExtractionCatalog {
                 .filter("holder", "c.holder_id = :holderId")
                 .filter("group", "c.group_id = :groupId")
                 .filter("product", "l.product_id = :productId")
-                .filter("employee", "COALESCE(x.employee_id, r.requested_by) = :employeeId")
+                .filter("employee", "m.employee_id = :employeeId")
                 .filter("shift", "x.employee_shift_id = :shiftId"));
 
         add(saleFilters(Extraction.of("carte-produits", "CARTES", "Achats par carte et par produit",
@@ -188,6 +188,39 @@ public class ExtractionCatalog {
                 .filter("card", "c.id = :cardId")
                 .filter("holder", "c.holder_id = :holderId")
                 .filter("group", "c.group_id = :groupId"));
+
+        add(Extraction.of("operations-cartes", "CARTES", "Opérations sur les cartes",
+                        "Émission, activation, blocage, déblocage, PIN, permissions, attribution et vente en point de vente : qui, quand, où.")
+                .col("date", "Date", DATETIME)
+                .col("card", "Carte", TEXT)
+                .col("holder", "Titulaire", TEXT)
+                .col("card_group", "Groupe", TEXT)
+                .col("operation", "Opération", TEXT)
+                .col("detail", "Détail", TEXT)
+                .col("place", "Station / PDV", TEXT)
+                .col("operator", "Opérateur", TEXT)
+                .col("operator_type", "Type d'opérateur", TEXT)
+                .select("\sce.at AS date, " + cardNo("c") + " AS card, h.name AS holder, g.name AS card_group,"
+                        + tg.zener.station.cards.CardEvents.LABEL_SQL + " AS operation, ce.detail,"
+                        + " COALESCE(st.short_name, pv.name) AS place, COALESCE(" + person("e") + ", 'Système') AS operator,"
+                        + " ro.label AS operator_type")
+                .from("""
+                        \scard_event ce
+                        JOIN card c ON c.id = ce.card_id
+                        LEFT JOIN holder h ON h.id = c.holder_id
+                        LEFT JOIN card_group g ON g.id = c.group_id
+                        LEFT JOIN station st ON st.id = ce.station_id
+                        LEFT JOIN pdv pv ON pv.id = ce.pdv_id
+                        LEFT JOIN employee e ON e.id = ce.employee_id
+                        LEFT JOIN role ro ON ro.code = e.role_code""")
+                .orderBy("ce.at DESC, ce.id DESC")
+                .filter("period", "ce.at")
+                .filter("station", "ce.station_id = :stationId")
+                .filter("pdv", "ce.pdv_id = :pdvId")
+                .filter("card", "ce.card_id = :cardId")
+                .filter("holder", "c.holder_id = :holderId")
+                .filter("group", "c.group_id = :groupId")
+                .filter("employee", "ce.employee_id = :employeeId"));
 
         // ============================================================== Recharges et mouvements
         add(Extraction.of("recharges", "MOUVEMENTS", "Recharges",
@@ -258,7 +291,7 @@ public class ExtractionCatalog {
                         LEFT JOIN recharge r ON r.id = m.recharge_id
                         LEFT JOIN station st ON st.id = COALESCE(m.station_id, x.station_id, r.station_id)
                         LEFT JOIN pdv pv ON pv.id = COALESCE(x.pdv_id, r.pdv_id)
-                        LEFT JOIN employee e ON e.id = COALESCE(x.employee_id, r.requested_by)""")
+                        LEFT JOIN employee e ON e.id = m.employee_id""")
                 .orderBy("m.at DESC, m.id DESC")
                 .filter("period", "m.at")
                 .filter("station", "COALESCE(m.station_id, x.station_id, r.station_id) = :stationId")
@@ -266,7 +299,7 @@ public class ExtractionCatalog {
                 .filter("card", "m.card_id = :cardId")
                 .filter("holder", "c.holder_id = :holderId")
                 .filter("group", "c.group_id = :groupId")
-                .filter("employee", "COALESCE(x.employee_id, r.requested_by) = :employeeId")
+                .filter("employee", "m.employee_id = :employeeId")
                 .filter("shift", "x.employee_shift_id = :shiftId"));
 
         // ============================================================== Ventes
@@ -453,6 +486,62 @@ public class ExtractionCatalog {
                 .filter("product", "EXISTS (SELECT 1 FROM sale_line l2 WHERE l2.sale_id = x.id AND l2.product_id = :productId)")
                 .filter("employee", "x.employee_id = :employeeId")
                 .filter("shift", "x.employee_shift_id = :shiftId"));
+
+        add(Extraction.of("activite-operateurs", "OPERATEURS", "Activité par opérateur",
+                        "Par opérateur, par jour et par poste : ventes, recharges, opérations sur les cartes et opérations journalisées.")
+                .col("day", "Jour", DATE)
+                .col("operator", "Opérateur", TEXT)
+                .col("operator_type", "Type d'opérateur", TEXT)
+                .col("station", "Station / PDV", TEXT)
+                .col("shift", "Poste", TEXT)
+                .sum("sales", "Ventes", INT)
+                .sum("sales_amount", "Montant ventes (F)", MONEY)
+                .sum("recharges", "Recharges", INT)
+                .sum("recharges_amount", "Montant recharges (F)", MONEY)
+                .sum("card_ops", "Opérations cartes", INT)
+                .sum("journal_ops", "Opérations journalisées", INT)
+                .col("first_at", "Première opération", DATETIME)
+                .col("last_at", "Dernière opération", DATETIME)
+                .select("\sCAST(a.at AS date) AS day, " + person("e") + " AS operator, ro.label AS operator_type,"
+                        + " string_agg(DISTINCT COALESCE(st.short_name, pv.name), ', ') AS station,"
+                        + " " + SHIFT_LABEL + " AS shift,"
+                        + " count(*) FILTER (WHERE a.kind = 'VENTE') AS sales,"
+                        + " COALESCE(sum(a.amount) FILTER (WHERE a.kind = 'VENTE'), 0) AS sales_amount,"
+                        + " count(*) FILTER (WHERE a.kind = 'RECHARGE') AS recharges,"
+                        + " COALESCE(sum(a.amount) FILTER (WHERE a.kind = 'RECHARGE'), 0) AS recharges_amount,"
+                        + " count(*) FILTER (WHERE a.kind = 'CARTE') AS card_ops,"
+                        + " count(*) FILTER (WHERE a.kind = 'JOURNAL') AS journal_ops,"
+                        + " min(a.at) AS first_at, max(a.at) AS last_at")
+                .from("""
+                        \s(SELECT x.at, x.employee_id, x.station_id, x.pdv_id, x.employee_shift_id AS shift_id, 'VENTE' AS kind,
+                                x.total AS amount
+                         FROM sale x WHERE x.employee_id IS NOT NULL
+                         UNION ALL
+                         SELECT r.created_at, r.requested_by, r.station_id, r.pdv_id, NULL, 'RECHARGE', r.amount FROM recharge r
+                         UNION ALL
+                         SELECT ce.at, ce.employee_id, ce.station_id, ce.pdv_id, NULL, 'CARTE', NULL
+                         FROM card_event ce WHERE ce.employee_id IS NOT NULL
+                         UNION ALL
+                         SELECT o.at, o.actor_id, o.station_id, o.pdv_id, NULL, 'JOURNAL', NULL
+                         FROM operation_log o WHERE o.actor_id IS NOT NULL) a
+                        JOIN employee e ON e.id = a.employee_id
+                        JOIN role ro ON ro.code = e.role_code
+                        LEFT JOIN LATERAL (
+                            SELECT es0.id FROM employee_shift es0
+                            WHERE a.shift_id IS NULL AND es0.employee_id = a.employee_id AND es0.started_at <= a.at
+                              AND (es0.ended_at IS NULL OR es0.ended_at > a.at)
+                            ORDER BY es0.started_at DESC LIMIT 1) sh ON true
+                        LEFT JOIN employee_shift es ON es.id = COALESCE(a.shift_id, sh.id)
+                        LEFT JOIN shift_config sc ON sc.id = es.config_id
+                        LEFT JOIN station st ON st.id = a.station_id
+                        LEFT JOIN pdv pv ON pv.id = a.pdv_id""")
+                .groupBy("CAST(a.at AS date), e.id, e.first_name, e.last_name, ro.label, es.id, es.started_at, sc.name")
+                .orderBy("CAST(a.at AS date) DESC, e.last_name, e.first_name, es.started_at")
+                .filter("period", "a.at")
+                .filter("station", "a.station_id = :stationId")
+                .filter("pdv", "a.pdv_id = :pdvId")
+                .filter("employee", "a.employee_id = :employeeId")
+                .filter("shift", "COALESCE(a.shift_id, sh.id) = :shiftId"));
 
         // ============================================================== Ordres de travail et audit
         add(Extraction.of("ordres-travail", "OPERATIONS", "Ordres de travail (Zen Mobility)",

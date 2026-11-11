@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { PageHeader, Card, Kpi, Badge, StatusBadge, Button, Select, KV, Async, Empty, Pager, IcoBox, Avatar, Person } from '../components/ui.jsx';
 import GeoMap from '../components/GeoMap.jsx';
+import CardPicker from '../components/CardPicker.jsx';
 import { FormModal, Field, TextInput, SelectInput, useToast } from '../components/feedback.jsx';
 import { useApi, useInterval, useLiveReload } from '../api/hooks.js';
 import { useLiveEvent } from '../api/live.jsx';
@@ -32,14 +33,15 @@ function OrderModal({ min, onClose, onSaved }) {
   const holders = useApi('/holders?kind=ENTREPRISE');
   const stations = useApi('/stations');
   const [f, setF] = useState({
-    holderId: '', cardNumber: '', productCode: 'GASOIL', quantity: Math.max(min, 1000), address: '', latitude: '', longitude: '',
+    holderId: '', card: null, productCode: 'GASOIL', quantity: Math.max(min, 1000), address: '', latitude: '', longitude: '',
     sourceStationId: '', paymentMethod: 'VIREMENT', requestedFor: inTwoHours(), note: '',
   });
   const set = (k) => (v) => setF((x) => ({ ...x, [k]: v }));
   return (
     <FormModal title="Nouvelle commande Zen Mobility" submitLabel="Créer la commande" wide onClose={onClose} onSubmit={async () => {
+      if (f.paymentMethod === 'CARTE' && !f.card) throw new Error('Choisissez la carte du client');
       const o = await post('/mobility/orders', {
-        holderId: f.holderId ? Number(f.holderId) : null, cardNumber: f.paymentMethod === 'CARTE' ? f.cardNumber : null,
+        holderId: f.holderId ? Number(f.holderId) : null, cardNumber: f.paymentMethod === 'CARTE' ? f.card.number : null,
         productCode: f.productCode, quantity: Number(f.quantity), address: f.address,
         latitude: f.latitude === '' ? null : Number(f.latitude), longitude: f.longitude === '' ? null : Number(f.longitude),
         sourceStationId: f.sourceStationId ? Number(f.sourceStationId) : null, paymentMethod: f.paymentMethod,
@@ -55,7 +57,7 @@ function OrderModal({ min, onClose, onSaved }) {
             { value: 'MOBILE_MONEY', label: 'Mobile money' }, { value: 'ESPECES', label: 'Espèces à la livraison' }]} />
         </Field>
         {f.paymentMethod === 'CARTE' ? (
-          <Field label="N° de carte (le client est déduit)"><TextInput value={f.cardNumber} onChange={set('cardNumber')} required /></Field>
+          <Field label="Carte du client (n° ou 5 derniers chiffres)"><CardPicker value={f.card} onChange={set('card')} /></Field>
         ) : (
           <Field label="Client">
             <SelectInput value={f.holderId} onChange={set('holderId')} placeholder="Choisir…" required

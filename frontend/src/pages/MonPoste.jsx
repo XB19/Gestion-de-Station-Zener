@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Fuel, Play, Pause, Coins, Banknote, Smartphone, CreditCard, Droplet, Receipt, History, CircleAlert } from 'lucide-react';
 import { PageHeader, Card, Kpi, Badge, StatusBadge, Button, KV, Async, Empty } from '../components/ui.jsx';
+import CardPicker from '../components/CardPicker.jsx';
 import { useToast } from '../components/feedback.jsx';
 import { useApi, useLiveReload } from '../api/hooks.js';
 import { useLiveEvent } from '../api/live.jsx';
@@ -17,7 +18,7 @@ function PumpSale({ station, onSold }) {
   const [pumpId, setPumpId] = useState(usable[0]?.id);
   const [qty, setQty] = useState('20');
   const [payment, setPayment] = useState('ESPECES');
-  const [cardNumber, setCardNumber] = useState('');
+  const [card, setCard] = useState(null);
   const [pin, setPin] = useState('');
   const [ref, setRef] = useState('');
   const [quote, setQuote] = useState(null);
@@ -27,22 +28,26 @@ function PumpSale({ station, onSold }) {
 
   useEffect(() => {
     if (!pump) return undefined;
-    const card = payment === 'CARTE' && cardNumber.replace(/\D/g, '').length === 12 ? cardNumber : null;
+    const number = payment === 'CARTE' ? card?.number : null;
     const t = setTimeout(() => {
-      api(`/sales/quote${qs({ productCode: pump.productCode, cardNumber: card })}`).then(setQuote).catch(() => setQuote(null));
+      api(`/sales/quote${qs({ productCode: pump.productCode, cardNumber: number })}`).then(setQuote).catch(() => setQuote(null));
     }, 250);
     return () => clearTimeout(t);
-  }, [pump?.productCode, payment, cardNumber]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pump?.productCode, payment, card?.number]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const amount = quote ? Math.round(Number(qty || 0) * quote.unitPrice) : null;
   const submit = async (e) => {
     e.preventDefault();
+    if (payment === 'CARTE' && !card) {
+      notify('Choisissez la carte du client', 'error');
+      return;
+    }
     setBusy(true);
     try {
       const s = await post('/sales/fuel', {
         uuid: crypto.randomUUID(), pumpId: Number(pumpId), liters: Number(qty), paymentMethod: payment,
         paymentRef: payment === 'MOBILE_MONEY' ? ref || null : null,
-        cardNumber: payment === 'CARTE' ? cardNumber : null, pin: payment === 'CARTE' ? pin || null : null,
+        cardNumber: payment === 'CARTE' ? card.number : null, pin: payment === 'CARTE' ? pin || null : null,
       });
       notify(`Vente enregistrée · ${num(qty, 1)} L · ${money(s.total)}`);
       setPin('');
@@ -103,8 +108,8 @@ function PumpSale({ station, onSold }) {
           <label className="input" style={{ marginTop: 10 }}><input value={ref} onChange={(e) => setRef(e.target.value)} placeholder="Référence TMoney / Flooz" /></label>
         )}
         {payment === 'CARTE' && (
-          <div className="form-grid" style={{ marginTop: 10 }}>
-            <label className="input"><input className="num" value={cardNumber} onChange={(e) => setCardNumber(e.target.value)} placeholder="N° de carte" required /></label>
+          <div style={{ marginTop: 10, display: 'grid', gap: 10 }}>
+            <CardPicker value={card} onChange={setCard} />
             <label className="input"><input type="password" inputMode="numeric" value={pin} onChange={(e) => setPin(e.target.value)} placeholder={autonomous ? 'PIN (obligatoire)' : 'PIN (facultatif)'} /></label>
           </div>
         )}

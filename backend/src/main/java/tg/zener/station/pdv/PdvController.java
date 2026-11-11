@@ -26,6 +26,7 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import tg.zener.station.cards.CardEvents;
 import tg.zener.station.cards.CardService;
 import tg.zener.station.common.ApiException;
 import tg.zener.station.common.Db;
@@ -48,9 +49,10 @@ public class PdvController {
     private final Settings settings;
     private final Journal journal;
     private final TransactionTemplate tx;
+    private final CardEvents cardEvents;
 
     public PdvController(Db db, PdvService pdvs, ValidationService validations, Refs refs, Settings settings, Journal journal,
-                         PlatformTransactionManager tm) {
+                         PlatformTransactionManager tm, CardEvents cardEvents) {
         this.db = db;
         this.pdvs = pdvs;
         this.validations = validations;
@@ -58,6 +60,7 @@ public class PdvController {
         this.settings = settings;
         this.journal = journal;
         this.tx = new TransactionTemplate(tm);
+        this.cardEvents = cardEvents;
     }
 
     private String select() {
@@ -288,6 +291,8 @@ public class PdvController {
                 \sINSERT INTO pdv_card (pdv_id, card_id) SELECT :p, unnest(CAST(:ids AS bigint[]))
                 ON CONFLICT (pdv_id, card_id) DO UPDATE SET returned_at = NULL, allocated_at = now()""",
                 Db.p("p", id, "ids", db.array("bigint", ids)));
+        cardEvents.recordMany(java.util.Arrays.stream(ids).map(x -> ((Number) x).longValue()).toList(), CardEvents.ATTRIBUTION_PDV,
+                (String) p.get("name"), null, id);
         journal.log("PDV_CARTES", Journal.MODIFICATIONS, "Cartes attribuées au point de vente",
                 p.get("name") + " · " + ids.length + " cartes", null, null, id);
         return get(id);
@@ -398,10 +403,11 @@ public class PdvController {
             throw ApiException.forbidden("Seul le superviseur du point de vente peut le clôturer");
         }
         // cartes invendues : retour au stock
-        db.update("""
+        List<Long> returned = db.list("""
                 \sUPDATE card SET status = 'STOCK', pdv_id = NULL
-                WHERE id IN (SELECT card_id FROM pdv_card WHERE pdv_id = :p AND sold_at IS NULL AND returned_at IS NULL)""",
-                Db.p("p", id));
+                WHERE id IN (SELECT card_id FROM pdv_card WHERE pdv_id = :p AND sold_at IS NULL AND returned_at IS NULL)
+                RETURNING id""", Db.p("p", id)).stream().map(c -> ((Number) c.get("id")).longValue()).toList();
+        cardEvents.recordMany(returned, CardEvents.RETOUR_STOCK, "Clôture du point de vente", null, id);
         db.update("UPDATE pdv_card SET returned_at = now() WHERE pdv_id = :p AND sold_at IS NULL AND returned_at IS NULL", Db.p("p", id));
         Map<String, Object> r = reconciliation(id);
         long expectedCash = ((Number) r.get("expectedCash")).longValue();

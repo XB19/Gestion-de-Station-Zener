@@ -375,32 +375,4 @@ public class ExtractionService {
         }
         out.add(new String[] {name, v});
     }
-
-    // ------------------------------------------------------------------ recherche de carte
-
-    /**
-     * Cartes correspondant à un numéro complet (12 chiffres), aux 5 derniers chiffres, ou à un fragment
-     * du numéro (4 chiffres au moins). Les espaces sont ignorés.
-     */
-    public List<Map<String, Object>> searchCards(String q) {
-        String digits = q == null ? "" : q.replaceAll("[^0-9]", "");
-        if (digits.length() < 4) {
-            throw new ApiException("Saisissez le numéro complet ou au moins les 4 derniers chiffres");
-        }
-        String cond;
-        if (digits.length() == 12) {
-            cond = "c.number = :q";
-        } else if (digits.length() == 5) {
-            cond = "right(c.number, 5) = :q";
-        } else {
-            cond = "c.number LIKE '%' || :q || '%'";
-        }
-        return db.list("""
-                \sSELECT c.id, c.number, substr(c.number, 1, 4) || ' ' || substr(c.number, 5, 4) || ' ' || substr(c.number, 9, 4) AS number_formatted,
-                       ct.label AS type_label, c.status, h.id AS holder_id, h.name AS holder_name, g.name AS group_name,
-                       c.balance, c.vehicle_plate
-                FROM card c JOIN card_type ct ON ct.code = c.type_code
-                LEFT JOIN holder h ON h.id = c.holder_id LEFT JOIN card_group g ON g.id = c.group_id
-                WHERE\s""" + cond + " ORDER BY c.number LIMIT 30", Db.p("q", digits));
-    }
 }

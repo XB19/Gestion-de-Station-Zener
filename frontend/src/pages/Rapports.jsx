@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Mail, Download, FileBarChart, Printer, Check, Save, RefreshCw, Send, Coins } from 'lucide-react';
 import { PageHeader, Card, Badge, Button, Segmented, Trend, Avatar, IcoBox, Async, Empty, Pager, StatusBadge, Select, KV, Person } from '../components/ui.jsx';
+import OperatorSelect from '../components/OperatorSelect.jsx';
 import { GroupedBars, hourlyBars } from '../components/charts.jsx';
 import { FormModal, Field, TextInput, useToast } from '../components/feedback.jsx';
 import { useApi, useLiveReload } from '../api/hooks.js';
@@ -267,23 +268,27 @@ function ShiftReports({ day, stationId }) {
 
 function Transactions({ day, stationId }) {
   const [page, setPage] = useState(0);
-  const sales = useApi(`/sales${qs({ from: day, to: day, stationId, page, size: 20 })}`);
+  const [operator, setOperator] = useState('');
+  const sales = useApi(`/sales${qs({ from: day, to: day, stationId, employeeId: operator, page, size: 20 })}`);
   useLiveReload(sales.reload, ['sale'], 4000);
   return (
     <Card>
       <div className="card-head" style={{ paddingBottom: 14 }}>
         <div className="card-title">Transactions · {longDate(day)}</div>
-        <Button size="sm" icon={Download} disabled={!sales.data?.items.length} onClick={() => exportCsv(`transactions-${day}.csv`, [
+        <span className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+          <OperatorSelect value={operator} onChange={(v) => { setOperator(v); setPage(0); }} stationId={stationId} />
+          <Button size="sm" icon={Download} disabled={!sales.data?.items.length} onClick={() => exportCsv(`transactions-${day}.csv`, [
           { label: 'Date', value: (x) => dateTime(x.at) }, { label: 'Lieu', value: (x) => x.stationName || x.pdvName }, { label: 'Type', value: 'kind' },
-          { label: 'Détail', value: 'description' }, { label: 'Vendeur', value: 'employeeName' }, { label: 'Paiement', value: 'paymentMethod' },
+          { label: 'Détail', value: 'description' }, { label: 'Opérateur', value: 'employeeName' }, { label: 'Paiement', value: 'paymentMethod' },
           { label: 'Montant (F)', value: 'total' },
         ], sales.data.items)}>Exporter la page</Button>
+        </span>
       </div>
       <Async state={sales}>
         {(data) => (data.items.length === 0 ? <Empty>Aucune transaction</Empty> : (
           <>
             <div className="table-wrap"><table className="table">
-              <thead><tr><th>Heure</th><th>Lieu</th><th>Détail</th><th>Vendeur</th><th>Paiement</th><th className="r">Montant (F)</th></tr></thead>
+              <thead><tr><th>Heure</th><th>Lieu</th><th>Détail</th><th>Opérateur</th><th>Paiement</th><th className="r">Montant (F)</th></tr></thead>
               <tbody>
                 {data.items.map((x) => (
                   <tr key={x.id}>

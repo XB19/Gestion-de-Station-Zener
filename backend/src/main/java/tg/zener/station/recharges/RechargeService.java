@@ -87,8 +87,8 @@ public class RechargeService {
                 Db.p("a", amount, "c", r.get("cardId")), Long.class);
         db.update("UPDATE recharge SET status = 'CREDITEE', credited_at = now() WHERE id = :id", Db.p("id", rechargeId));
         db.update("""
-                \sINSERT INTO card_movement (card_id, kind, amount, balance_after, station_id, recharge_id, detail)
-                VALUES (:c, 'RECHARGE', :a, :b, :s, :r, :d)""",
+                \sINSERT INTO card_movement (card_id, kind, amount, balance_after, station_id, recharge_id, detail, employee_id)
+                VALUES (:c, 'RECHARGE', :a, :b, :s, :r, :d, (SELECT requested_by FROM recharge WHERE id = :r))""",
                 Db.p("c", r.get("cardId"), "a", amount, "b", balance, "s", r.get("stationId"), "r", rechargeId,
                         "d", channelLabel((String) r.get("channel"))));
         if (!"MASSE".equals(r.get("channel"))) {

@@ -4,6 +4,8 @@ import {
   TriangleAlert, Pencil, Cylinder, Users, Sparkles, TrendingUp, TrendingDown, Mail, Trash2,
 } from 'lucide-react';
 import { PageHeader, Card, Kpi, Trend, Badge, StatusBadge, Button, Segmented, Select, IcoBox, Async, Empty, Pager, Person } from '../components/ui.jsx';
+import CardPicker from '../components/CardPicker.jsx';
+import OperatorSelect from '../components/OperatorSelect.jsx';
 import { Donut } from '../components/charts.jsx';
 import { FormModal, Field, TextInput, SelectInput, useToast } from '../components/feedback.jsx';
 import { useApi, useLiveReload } from '../api/hooks.js';
@@ -72,7 +74,7 @@ function SaleModal({ exchange, stations, products, onClose, onSaved }) {
   const [stationId, setStationId] = useState(user.stationId || stations[0]?.id || '');
   const [lines, setLines] = useState([{ productCode: sellable[0]?.code, quantity: 1, withDeposit: false }]);
   const [payment, setPayment] = useState('ESPECES');
-  const [cardNumber, setCardNumber] = useState('');
+  const [card, setCard] = useState(null);
   const [pin, setPin] = useState('');
   const total = lines.reduce((s, l) => {
     const p = sellable.find((x) => x.code === l.productCode);
@@ -86,7 +88,8 @@ function SaleModal({ exchange, stations, products, onClose, onSaved }) {
       wide
       onClose={onClose}
       onSubmit={async () => {
-        const base = { stationId: Number(stationId), paymentMethod: payment, cardNumber: payment === 'CARTE' ? cardNumber : null,
+        if (payment === 'CARTE' && !card) throw new Error('Choisissez la carte du client');
+        const base = { stationId: Number(stationId), paymentMethod: payment, cardNumber: payment === 'CARTE' ? card.number : null,
           pin: payment === 'CARTE' ? pin || null : null };
         const r = exchange
           ? await post('/sales/gas-exchange', { ...base, productCode: lines[0].productCode, quantity: Number(lines[0].quantity) })
@@ -104,7 +107,7 @@ function SaleModal({ exchange, stations, products, onClose, onSaved }) {
         </Field>
         {payment === 'CARTE' && (
           <>
-            <Field label="N° de carte"><TextInput value={cardNumber} onChange={setCardNumber} required /></Field>
+            <Field label="Carte (n° ou 5 derniers chiffres)"><CardPicker value={card} onChange={setCard} /></Field>
             <Field label="Code PIN"><TextInput type="password" value={pin} onChange={setPin} /></Field>
           </>
         )}
@@ -200,7 +203,8 @@ export default function VentesStocks() {
   const bottles = useApi(`/stock/gas-bottles${qs({ stationId })}`);
   const stock = useApi(`/stock${qs({ stationId, category })}`);
   const stations = useApi('/stations');
-  const sales = useApi(can('TRANSACTIONS', 'VENTES_POMPE') ? `/sales${qs({ stationId, page, size: 10 })}` : null);
+  const [operator, setOperator] = useState('');
+  const sales = useApi(can('TRANSACTIONS', 'VENTES_POMPE') ? `/sales${qs({ stationId, employeeId: operator, page, size: 10 })}` : null);
   const reload = () => {
     summary.reload();
     bottles.reload();
@@ -372,14 +376,15 @@ export default function VentesStocks() {
         <Card>
           <div className="card-head" style={{ paddingBottom: 14, alignItems: 'center' }}>
             <div className="card-title">Dernières ventes</div>
-            <span className="muted" style={{ fontSize: 13 }}>Historique des transactions · mis à jour en direct</span>
+            {can('TRANSACTIONS') ? <OperatorSelect value={operator} onChange={(v) => { setOperator(v); setPage(0); }} stationId={stationId} />
+              : <span className="muted" style={{ fontSize: 13 }}>Historique des transactions · mis à jour en direct</span>}
           </div>
           <Async state={sales}>
             {(data) => (data.items.length === 0 ? <Empty>Aucune vente</Empty> : (
               <>
                 <div className="table-wrap"><table className="table">
                   <thead>
-                    <tr><th>Quand</th><th>Lieu</th><th>Type</th><th>Détail</th><th>Vendeur</th><th>Paiement</th><th className="r">Montant (F)</th></tr>
+                    <tr><th>Quand</th><th>Lieu</th><th>Type</th><th>Détail</th><th>Opérateur</th><th>Paiement</th><th className="r">Montant (F)</th></tr>
                   </thead>
                   <tbody>
                     {data.items.map((x) => (

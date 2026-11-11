@@ -16,6 +16,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import tg.zener.station.cards.CardEvents;
 import tg.zener.station.common.Db;
 import tg.zener.station.common.LiveFeed;
 import tg.zener.station.common.Settings;
@@ -75,12 +76,13 @@ public class DemoSimulator {
     private final LiveFeed live;
     private final boolean enabled;
     private final Random rnd = new Random();
+    private final CardEvents cardEvents;
     private final Map<Long, CurrentUser> userCache = new ConcurrentHashMap<>();
     private volatile boolean started;
 
     public DemoSimulator(Db db, SaleService sales, PdvService pdvs, RechargeService recharges, ShiftService shifts, StockService stock,
                          DeliveryService deliveries, Tracking tracking, Settings settings, UserLoader users, Journal journal,
-                         LiveFeed live, @Value("${app.demo-data}") boolean enabled) {
+                         LiveFeed live, CardEvents cardEvents, @Value("${app.demo-data}") boolean enabled) {
         this.db = db;
         this.sales = sales;
         this.pdvs = pdvs;
@@ -93,6 +95,7 @@ public class DemoSimulator {
         this.users = users;
         this.journal = journal;
         this.live = live;
+        this.cardEvents = cardEvents;
         this.enabled = enabled;
     }
 
@@ -341,6 +344,7 @@ public class DemoSimulator {
         }
         db.update("UPDATE card SET status = 'ACTIVE', activated_by = :u, activated_at = now() WHERE id = :id",
                 Db.p("id", card.get("id"), "u", accountant));
+        cardEvents.recordAs(accountant, ((Number) card.get("id")).longValue(), CardEvents.ACTIVATION, null, null, null);
         journal.logAs(accountant, "CARTE_ACTIVEE", Journal.VENTES_CARTES, "Carte activée",
                 "···" + ((String) card.get("number")).substring(8), null, null, null);
     }
@@ -496,6 +500,10 @@ public class DemoSimulator {
             db.update("UPDATE card SET status = 'PDV', pdv_id = :p WHERE id = ANY(:ids)", Db.p("p", p.get("id"), "ids", db.array("bigint", ids)));
             db.update("INSERT INTO pdv_card (pdv_id, card_id) SELECT :p, unnest(CAST(:ids AS bigint[])) ON CONFLICT DO NOTHING",
                     Db.p("p", p.get("id"), "ids", db.array("bigint", ids)));
+            for (Object cid : ids) {
+                cardEvents.recordAs(null, ((Number) cid).longValue(), CardEvents.ATTRIBUTION_PDV, "Réassort automatique", null,
+                        ((Number) p.get("id")).longValue());
+            }
         }
     }
 

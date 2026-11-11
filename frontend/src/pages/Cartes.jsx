@@ -7,6 +7,7 @@ import {
 import {
   PageHeader, Card, Kpi, Trend, Badge, StatusBadge, Button, Select, SearchInput, KV, BankCard, IcoBox, Async, Empty, Pager,
 } from '../components/ui.jsx';
+import CardPicker from '../components/CardPicker.jsx';
 import { FormModal, Field, TextInput, SelectInput, useToast } from '../components/feedback.jsx';
 import { useApi, useLiveReload } from '../api/hooks.js';
 import { api, post, put, qs } from '../api/client.js';
@@ -132,7 +133,6 @@ export default function Cartes() {
   const notify = useToast();
   const { can } = useSession();
   const [tab, setTab] = useState('ALL');
-  const [number, setNumber] = useState('6011 2847 0093');
   const [found, setFound] = useState(null);
   const [lookupError, setLookupError] = useState(null);
   const [q, setQ] = useState('');
@@ -157,7 +157,7 @@ export default function Cartes() {
     return () => clearTimeout(t);
   }, [q]);
 
-  const lookup = async (n = number) => {
+  const lookup = async (n = '601128470093') => {
     setLookupError(null);
     try {
       setFound(await api(`/cards/lookup/${encodeURIComponent(n.replace(/\D/g, ''))}`));
@@ -215,18 +215,15 @@ export default function Cartes() {
         <div style={{ paddingRight: 24 }}>
           <div className="card-title">Consulter une carte</div>
           <div className="card-sub">Saisissez ou scannez le numéro pour voir ses dernières informations et la modifier.</div>
-          <form className="row" style={{ gap: 10, marginTop: 18 }} onSubmit={(e) => { e.preventDefault(); lookup(); }}>
-            <label className="input" style={{ flex: 1, minWidth: 0, height: 48, borderWidth: 2, borderColor: 'var(--primary)', boxShadow: '0 0 0 3px var(--primary-50)' }}>
-              <CreditCard size={18} color="var(--primary)" />
-              <input className="num" style={{ fontSize: 15, fontWeight: 600, letterSpacing: '.05em' }} value={number} onChange={(e) => setNumber(e.target.value)} />
-              <Badge tone="gray"><Radio size={13} /> Lecteur COM9</Badge>
-            </label>
-            <Button variant="primary" icon={Search} style={{ height: 48 }} type="submit">Rechercher</Button>
-          </form>
+          <div style={{ marginTop: 18 }}>
+            <CardPicker value={found} onChange={(c) => (c ? lookup(c.number) : setFound(null))} height={48}
+              placeholder="Numéro complet ou 5 derniers chiffres, puis Entrée"
+              suffix={<Badge tone="gray"><Radio size={13} /> Lecteur COM9</Badge>} />
+          </div>
           <div className="row" style={{ gap: 8, marginTop: 14, flexWrap: 'wrap' }}>
             <span className="muted" style={{ whiteSpace: 'nowrap' }}>Récentes :</span>
             {(recent.data?.items || []).map((c) => (
-              <button key={c.id} className="btn btn-sm" style={{ fontWeight: 500 }} onClick={() => { setNumber(c.numberFormatted); lookup(c.number); }}>
+              <button key={c.id} className="btn btn-sm" style={{ fontWeight: 500 }} onClick={() => lookup(c.number)}>
                 {masked(c.number)} {c.holderName?.split(' ')[0]}
               </button>
             ))}
