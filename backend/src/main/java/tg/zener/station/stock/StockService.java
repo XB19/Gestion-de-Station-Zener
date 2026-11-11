@@ -165,7 +165,7 @@ public class StockService {
         live.publish("alert", station, Map.of("alertId", alertId, "severity", severity, "title", where, "detail", detail));
     }
 
-    static String qty(BigDecimal q) {
+    public static String qty(BigDecimal q) {
         return String.format(java.util.Locale.ROOT, "%,d", q.setScale(0, RoundingMode.HALF_UP).longValue()).replace(',', ' ');
     }
 

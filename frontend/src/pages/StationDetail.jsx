@@ -13,6 +13,7 @@ import { useSession } from '../api/session.jsx';
 import { del, fileUrl, post, put } from '../api/client.js';
 import { ago, avatarColor, date, fcfa, hhmm, isoDay, liters, longDate, num, time } from '../lib/format.js';
 import { StationFormModal } from './Stations.jsx';
+import TankTools from '../components/TankTools.jsx';
 
 const PUMP_STATE = { LIBRE: 'Libre', DISTRIBUE: 'Distribue', HORS_SERVICE: 'Hors service' };
 const TANK_COLORS = { SUPER: '#2a75c4', GASOIL: '#5aa935', PETROLE: '#f2a32a' };
@@ -531,6 +532,7 @@ export default function StationDetail() {
                       </div>
                     ))}
                   </div>
+                  <TankTools stationId={s.id} tanks={s.tanks || []} canEdit={can('STOCKS')} onChanged={st.reload} />
                   {low.map((t) => (
                     <div key={t.id} className="alert-box red" style={{ marginTop: 16 }}>
                       <TriangleAlert size={18} style={{ flexShrink: 0, marginTop: 1 }} />

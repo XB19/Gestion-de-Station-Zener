@@ -33,6 +33,11 @@ public class Refs {
         return "LIV-" + Year.now() + "-" + next("ref_delivery_seq");
     }
 
+    /** Réception de carburant (dépotage) : DEP-2026-1001. */
+    public String reception() {
+        return "DEP-" + Year.now() + "-" + next("ref_reception_seq");
+    }
+
     public String pdv() {
         return "PDV-" + next("ref_pdv_seq");
     }

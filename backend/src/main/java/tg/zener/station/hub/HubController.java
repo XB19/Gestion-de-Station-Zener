@@ -22,6 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
 import tg.zener.station.cards.CardService;
 import tg.zener.station.common.ApiException;
 import tg.zener.station.common.Db;
+import tg.zener.station.tanks.TankService;
 import tg.zener.station.common.LiveFeed;
 import tg.zener.station.mobility.Tracking;
 import tg.zener.station.sales.SaleService;
@@ -40,14 +41,16 @@ public class HubController {
     private final Db db;
     private final StationService stations;
     private final StockService stock;
+    private final TankService tanks;
     private final CardService cards;
     private final SaleService sales;
     private final Tracking tracking;
     private final LiveFeed live;
 
     public HubController(Db db, StationService stations, StockService stock, CardService cards, SaleService sales,
-                         Tracking tracking, LiveFeed live) {
+                         Tracking tracking, LiveFeed live, TankService tanks) {
         this.db = db;
+        this.tanks = tanks;
         this.stations = stations;
         this.stock = stock;
         this.cards = cards;
@@ -60,7 +63,9 @@ public class HubController {
 
     public record PumpState(String code, String port, String state, BigDecimal currentVolume, BigDecimal indexTotal) {}
 
-    public record TankLevel(Long id, String name, @NotNull BigDecimal volume) {}
+    /** Jauge d'une cuve : volume obligatoire ; hauteur, température, eau et densité si la sonde les fournit. */
+    public record TankLevel(Long id, String name, @NotNull BigDecimal volume, BigDecimal heightMm, BigDecimal temperature,
+                            BigDecimal waterHeightMm, BigDecimal waterVolume, BigDecimal density) {}
 
     public record Heartbeat(Boolean readerConnected, List<@Valid PumpState> pumps, List<@Valid TankLevel> tanks) {}
 
@@ -111,7 +116,8 @@ public class HubController {
                 if (t.volume().signum() < 0) {
                     throw new ApiException("Volume de cuve invalide");
                 }
-                stock.setTankVolume(tankId, t.volume());
+                tanks.gauge(tankId, new TankService.Measure(t.volume(), t.heightMm(), t.temperature(), t.waterHeightMm(),
+                        t.waterVolume(), t.density()));
             }
         }
         return config(stationId);

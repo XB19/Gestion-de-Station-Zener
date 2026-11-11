@@ -160,6 +160,10 @@ function EntryModal({ purchase, stations, products, onClose, onSaved }) {
   const [supplier, setSupplier] = useState('');
   const [unitCost, setUnitCost] = useState('');
   const [note, setNote] = useState('');
+  // carburant : bon de livraison du fournisseur (réception en cuve, écart conservé)
+  const [ticket, setTicket] = useState({ ticketVolume: '', ticketNumber: '', supplier: '', truckPlate: '', driver: '' });
+  const fuel = !purchase && items.find((p) => p.code === productCode)?.category === 'CARBURANT';
+  const setT = (k) => (v) => setTicket((x) => ({ ...x, [k]: v }));
   return (
     <FormModal title={purchase ? 'Nouvel achat fournisseur' : 'Entrée de stock'} onClose={onClose} onSubmit={async () => {
       if (purchase) {
@@ -167,8 +171,9 @@ function EntryModal({ purchase, stations, products, onClose, onSaved }) {
           lines: [{ productCode, quantity: Number(quantity), unitCost: unitCost ? Number(unitCost) : 0 }] });
         notify('Achat enregistré · stock mis à jour');
       } else {
-        await post('/stock/entries', { stationId: Number(stationId), productCode, quantity: Number(quantity), note: note || null });
-        notify('Entrée de stock enregistrée');
+        await post('/stock/entries', { stationId: Number(stationId), productCode, quantity: Number(quantity), note: note || null,
+          ...(fuel ? { ...ticket, ticketVolume: ticket.ticketVolume ? Number(ticket.ticketVolume) : null } : {}) });
+        notify(fuel ? 'Réception de carburant enregistrée' : 'Entrée de stock enregistrée');
       }
       onSaved();
     }}>
@@ -184,6 +189,17 @@ function EntryModal({ purchase, stations, products, onClose, onSaved }) {
           <TextInput type="number" min="0.01" step="0.01" value={quantity} onChange={setQuantity} required />
         </Field>
         {purchase && <Field label="Coût unitaire (F)"><TextInput type="number" min="0" value={unitCost} onChange={setUnitCost} /></Field>}
+        {fuel && (
+          <>
+            <Field label="Volume du bon (L)" hint="Laisser vide si égal au volume reçu">
+              <TextInput type="number" min="1" step="0.01" value={ticket.ticketVolume} onChange={setT('ticketVolume')} />
+            </Field>
+            <Field label="N° du bon de livraison"><TextInput value={ticket.ticketNumber} onChange={setT('ticketNumber')} /></Field>
+            <Field label="Fournisseur"><TextInput value={ticket.supplier} onChange={setT('supplier')} placeholder="Dépôt pétrolier…" /></Field>
+            <Field label="Camion"><TextInput value={ticket.truckPlate} onChange={setT('truckPlate')} placeholder="TG 1234 AB" /></Field>
+            <Field label="Chauffeur" full><TextInput value={ticket.driver} onChange={setT('driver')} /></Field>
+          </>
+        )}
         <Field label="Note" full><TextInput value={note} onChange={setNote} placeholder="N° de bon de livraison…" /></Field>
       </div>
     </FormModal>

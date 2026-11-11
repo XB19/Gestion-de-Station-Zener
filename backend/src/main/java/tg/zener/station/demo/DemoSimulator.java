@@ -18,6 +18,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import tg.zener.station.cards.CardEvents;
 import tg.zener.station.common.Db;
+import tg.zener.station.tanks.TankService;
 import tg.zener.station.common.LiveFeed;
 import tg.zener.station.common.Settings;
 import tg.zener.station.journal.Journal;
@@ -77,12 +78,15 @@ public class DemoSimulator {
     private final boolean enabled;
     private final Random rnd = new Random();
     private final CardEvents cardEvents;
+    private final TankService tanks;
+    private final DemoTanks demoTanks;
     private final Map<Long, CurrentUser> userCache = new ConcurrentHashMap<>();
     private volatile boolean started;
 
     public DemoSimulator(Db db, SaleService sales, PdvService pdvs, RechargeService recharges, ShiftService shifts, StockService stock,
                          DeliveryService deliveries, Tracking tracking, Settings settings, UserLoader users, Journal journal,
-                         LiveFeed live, CardEvents cardEvents, @Value("${app.demo-data}") boolean enabled) {
+                         LiveFeed live, CardEvents cardEvents, TankService tanks, DemoTanks demoTanks,
+                         @Value("${app.demo-data}") boolean enabled) {
         this.db = db;
         this.sales = sales;
         this.pdvs = pdvs;
@@ -96,6 +100,8 @@ public class DemoSimulator {
         this.journal = journal;
         this.live = live;
         this.cardEvents = cardEvents;
+        this.tanks = tanks;
+        this.demoTanks = demoTanks;
         this.enabled = enabled;
     }
 
@@ -378,6 +384,7 @@ public class DemoSimulator {
         userCache.clear();
         safe("postes", this::rotateShifts);
         safe("cuves", this::refillTanks);
+        safe("jauges", () -> demoTanks.tick(settings.getList("demo.online_codes"), rnd));
         safe("boutique", this::restockShops);
         safe("cartes flottes", this::topUpFleetCards);
         safe("cartes PDV", this::restockPdvCards);
@@ -455,10 +462,13 @@ public class DemoSimulator {
                 WHERE t.volume < t.capacity * 0.10 AND s.code = ANY(:c)""", Db.p("c", codes("demo.online_codes")))) {
             BigDecimal capacity = (BigDecimal) t.get("capacity");
             BigDecimal q = capacity.multiply(BigDecimal.valueOf(0.6)).setScale(0, RoundingMode.HALF_UP);
-            String ref = "BL-" + (40_000 + rnd.nextInt(9_999));
-            stock.moveTank(id(t), q, "ENTREE", ref, null, "Livraison du dépôt");
-            journal.logAs(null, "LIVRAISON_CARBURANT", Journal.LIVRAISONS, "Livraison de carburant reçue",
-                    t.get("shortName") + " · " + t.get("name") + " · " + q.toPlainString() + " L · " + ref, null, id(t.get("stationId")), null);
+            String ticket = "BL-" + (40_000 + rnd.nextInt(9_999));
+            // bon du dépôt et volume constaté (écart de quelques litres, parfois davantage)
+            BigDecimal received = q.add(BigDecimal.valueOf(rnd.nextInt(10) == 0 ? -(40 + rnd.nextInt(80)) : rnd.nextInt(21) - 12));
+            Long manager = db.value("SELECT manager_id FROM station WHERE id = :s", Db.p("s", t.get("stationId")), Long.class);
+            tanks.receive(id(t), new TankService.Reception(q, received, BigDecimal.ZERO, DemoTanks.supplier(rnd), DemoTanks.plate(rnd),
+                    DemoTanks.driver(rnd), ticket, new BigDecimal("0.8350"), BigDecimal.valueOf(27 + rnd.nextInt(5)), null, null,
+                    "Livraison du dépôt"), manager);
         }
     }
 

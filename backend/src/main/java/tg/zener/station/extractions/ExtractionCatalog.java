@@ -28,6 +28,7 @@ public class ExtractionCatalog {
         SECTIONS.put("CARTES", "Cartes et clients");
         SECTIONS.put("MOUVEMENTS", "Recharges et mouvements");
         SECTIONS.put("VENTES", "Ventes");
+        SECTIONS.put("STOCKS", "Pistolets, cuves et stocks");
         SECTIONS.put("OPERATEURS", "Opérateurs et postes");
         SECTIONS.put("OPERATIONS", "Ordres de travail et audit");
     }
@@ -405,6 +406,172 @@ public class ExtractionCatalog {
                         LEFT JOIN shift_config sc ON sc.id = es.config_id""")
                 .orderBy("x.at DESC, x.id DESC, l.id"), true));
 
+        // ============================================================== Pistolets, cuves et stocks
+        pumpReport("POSTE", "releves-pistolets-postes", "Relevés des pistolets par poste",
+                "Index de début et de fin de chaque pistolet sur chaque poste, volume compteur comparé au volume vendu.");
+        pumpReport("JOUR", "releves-pistolets-jours", "Relevés des pistolets par jour",
+                "Index journaliers de chaque pistolet ; l'écart compteur − ventes signale une distribution non enregistrée.");
+        pumpReport("MOIS", "releves-pistolets-mois", "Relevés des pistolets par mois",
+                "Cumul mensuel des relevés journaliers : index, volume compteur, ventes et écart.");
+
+        add(Extraction.of("historique-cuves", "STOCKS", "Historique des cuves (jauges et piges)",
+                        "Mesures des cuves : volume mesuré, stock théorique, écart, hauteur, température, eau en fond de cuve, densité.")
+                .col("date", "Date", DATETIME)
+                .col("station", "Station", TEXT)
+                .col("tank", "Cuve", TEXT)
+                .col("product", "Produit", TEXT)
+                .col("source", "Source", TEXT)
+                .col("volume", "Volume mesuré (L)", QTY)
+                .col("book_volume", "Stock théorique (L)", QTY)
+                .col("gap", "Écart (L)", QTY)
+                .col("height_mm", "Hauteur (mm)", QTY)
+                .col("temperature", "Température (°C)", QTY)
+                .col("water_height_mm", "Eau (mm)", QTY)
+                .col("water_volume", "Eau (L)", QTY)
+                .col("density", "Densité", QTY)
+                .col("operator", "Opérateur", TEXT)
+                .col("note", "Note", TEXT)
+                .select("\sr.at AS date, st.short_name AS station, t.name AS tank, pr.name AS product,"
+                        + " CASE r.source WHEN 'JAUGE' THEN 'Jauge' ELSE 'Pige' END AS source, r.volume, r.book_volume, r.gap,"
+                        + " r.height_mm, r.temperature, r.water_height_mm, r.water_volume, r.density, " + person("e") + " AS operator, r.note")
+                .from("""
+                        \stank_reading r
+                        JOIN tank t ON t.id = r.tank_id
+                        JOIN station st ON st.id = r.station_id
+                        JOIN product pr ON pr.id = r.product_id
+                        LEFT JOIN employee e ON e.id = r.employee_id""")
+                .orderBy("r.at DESC, r.id DESC")
+                .filter("period", "r.at")
+                .filter("station", "r.station_id = :stationId")
+                .filter("product", "r.product_id = :productId")
+                .filter("employee", "r.employee_id = :employeeId"));
+
+        add(Extraction.of("receptions-carburant", "STOCKS", "Réceptions de carburant",
+                        "Dépotages : fournisseur, camion, chauffeur, bon de livraison, volume du bon, volume reçu en cuve et écart.")
+                .col("ref", "Référence", TEXT)
+                .col("started_at", "Début", DATETIME)
+                .col("ended_at", "Fin", DATETIME)
+                .col("station", "Station", TEXT)
+                .col("tank", "Cuve", TEXT)
+                .col("product", "Produit", TEXT)
+                .col("supplier", "Fournisseur", TEXT)
+                .col("truck_plate", "Camion", TEXT)
+                .col("driver", "Chauffeur", TEXT)
+                .col("ticket_number", "N° du bon", TEXT)
+                .sum("ticket_volume", "Volume du bon (L)", QTY)
+                .sum("received_volume", "Volume reçu (L)", QTY)
+                .sum("gap", "Écart (L)", QTY)
+                .col("volume_before", "Cuve avant (L)", QTY)
+                .col("volume_after", "Cuve après (L)", QTY)
+                .col("ticket_density", "Densité", QTY)
+                .col("temperature", "Température (°C)", QTY)
+                .col("operator", "Opérateur", TEXT)
+                .select("\sd.ref, d.started_at, d.ended_at, st.short_name AS station, t.name AS tank, pr.name AS product, d.supplier,"
+                        + " d.truck_plate, d.driver, d.ticket_number, d.ticket_volume, d.received_volume, d.gap, d.volume_before,"
+                        + " d.volume_after, d.ticket_density, d.temperature, " + person("e") + " AS operator")
+                .from("""
+                        \stank_delivery d
+                        JOIN tank t ON t.id = d.tank_id
+                        JOIN station st ON st.id = d.station_id
+                        JOIN product pr ON pr.id = d.product_id
+                        LEFT JOIN employee e ON e.id = d.employee_id""")
+                .orderBy("d.ended_at DESC, d.id DESC")
+                .filter("period", "d.ended_at")
+                .filter("station", "d.station_id = :stationId")
+                .filter("product", "d.product_id = :productId")
+                .filter("employee", "d.employee_id = :employeeId"));
+
+        add(Extraction.of("inventaires", "STOCKS", "Inventaires (théorique / compté)",
+                        "Comptages d'articles et piges de cuves : stock théorique, stock compté, écart, ajustement et opérateur.")
+                .col("date", "Date", DATETIME)
+                .col("place", "Station / PDV", TEXT)
+                .col("product", "Produit", TEXT)
+                .col("tank", "Cuve", TEXT)
+                .col("book_quantity", "Théorique", QTY)
+                .col("counted_quantity", "Compté", QTY)
+                .sum("gap", "Écart", QTY)
+                .col("unit", "Unité", TEXT)
+                .col("adjusted", "Ajusté", TEXT)
+                .col("operator", "Opérateur", TEXT)
+                .col("note", "Note", TEXT)
+                .select("\sc.at AS date, COALESCE(st.short_name, pv.name) AS place, pr.name AS product, t.name AS tank, c.book_quantity,"
+                        + " c.counted_quantity, c.gap, pr.unit, CASE WHEN c.adjusted THEN 'Oui' ELSE 'Non' END AS adjusted,"
+                        + " " + person("e") + " AS operator, c.note")
+                .from("""
+                        \sstock_count c
+                        JOIN product pr ON pr.id = c.product_id
+                        LEFT JOIN tank t ON t.id = c.tank_id
+                        LEFT JOIN station st ON st.id = c.station_id
+                        LEFT JOIN pdv pv ON pv.id = c.pdv_id
+                        LEFT JOIN employee e ON e.id = c.employee_id""")
+                .orderBy("c.at DESC, c.id DESC")
+                .filter("period", "c.at")
+                .filter("station", "c.station_id = :stationId")
+                .filter("pdv", "c.pdv_id = :pdvId")
+                .filter("product", "c.product_id = :productId")
+                .filter("employee", "c.employee_id = :employeeId"));
+
+        add(Extraction.of("alarmes-cuves", "STOCKS", "Alarmes des cuves",
+                        "Niveau haut, eau en fond de cuve, température, écart jauge / théorique : début, fin, valeur, seuil, acquittement.")
+                .col("started_at", "Début", DATETIME)
+                .col("ended_at", "Fin", DATETIME)
+                .col("station", "Station", TEXT)
+                .col("tank", "Cuve", TEXT)
+                .col("product", "Produit", TEXT)
+                .col("alarm", "Alarme", TEXT)
+                .col("state", "État", TEXT)
+                .col("value", "Valeur", QTY)
+                .col("threshold", "Seuil", QTY)
+                .col("acknowledged_by", "Acquittée par", TEXT)
+                .col("acknowledged_at", "Acquittée le", DATETIME)
+                .col("note", "Note", TEXT)
+                .select("\sa.started_at, a.ended_at, st.short_name AS station, t.name AS tank, pr.name AS product,"
+                        + " CASE a.kind WHEN 'NIVEAU_HAUT' THEN 'Niveau haut' WHEN 'EAU' THEN 'Eau en fond de cuve'"
+                        + " WHEN 'TEMPERATURE' THEN 'Température élevée' ELSE 'Écart jauge / théorique' END AS alarm,"
+                        + " CASE WHEN a.ended_at IS NULL THEN 'En cours' ELSE 'Terminée' END AS state, a.value, a.threshold,"
+                        + " " + person("e") + " AS acknowledged_by, a.acknowledged_at, a.note")
+                .from("""
+                        \stank_alarm a
+                        JOIN tank t ON t.id = a.tank_id
+                        JOIN station st ON st.id = a.station_id
+                        JOIN product pr ON pr.id = t.product_id
+                        LEFT JOIN employee e ON e.id = a.acknowledged_by""")
+                .orderBy("a.ended_at NULLS FIRST, a.started_at DESC")
+                .filter("period", "a.started_at")
+                .filter("station", "a.station_id = :stationId")
+                .filter("product", "t.product_id = :productId")
+                .filter("employee", "a.acknowledged_by = :employeeId"));
+
+        add(Extraction.of("mouvements-stock", "STOCKS", "Mouvements de stock",
+                        "Entrées, ventes, échanges, livraisons et ajustements d'inventaire, par article ou par cuve.")
+                .col("date", "Date", DATETIME)
+                .col("place", "Station / PDV", TEXT)
+                .col("product", "Produit", TEXT)
+                .col("tank", "Cuve", TEXT)
+                .col("nature", "Nature", TEXT)
+                .sum("quantity", "Quantité", QTY)
+                .col("unit", "Unité", TEXT)
+                .col("ref", "Référence", TEXT)
+                .col("operator", "Opérateur", TEXT)
+                .col("note", "Note", TEXT)
+                .select("\sm.at AS date, COALESCE(st.short_name, pv.name) AS place, pr.name AS product, t.name AS tank,"
+                        + " CASE m.kind WHEN 'ENTREE' THEN 'Entrée' WHEN 'VENTE' THEN 'Vente' WHEN 'ECHANGE' THEN 'Échange de bouteille'"
+                        + " WHEN 'AJUSTEMENT' THEN 'Ajustement' WHEN 'INVENTAIRE' THEN 'Inventaire' WHEN 'LIVRAISON' THEN 'Livraison'"
+                        + " ELSE m.kind END AS nature, m.quantity, pr.unit, m.ref, " + person("e") + " AS operator, m.note")
+                .from("""
+                        \sstock_movement m
+                        JOIN product pr ON pr.id = m.product_id
+                        LEFT JOIN tank t ON t.id = m.tank_id
+                        LEFT JOIN station st ON st.id = m.station_id
+                        LEFT JOIN pdv pv ON pv.id = m.pdv_id
+                        LEFT JOIN employee e ON e.id = m.user_id""")
+                .orderBy("m.at DESC, m.id DESC")
+                .filter("period", "m.at")
+                .filter("station", "m.station_id = :stationId")
+                .filter("pdv", "m.pdv_id = :pdvId")
+                .filter("product", "m.product_id = :productId")
+                .filter("employee", "m.user_id = :employeeId"));
+
         // ============================================================== Opérateurs et postes
         add(Extraction.of("postes", "OPERATEURS", "Postes et remises d'espèces",
                         "Chaque poste : opérateur, station, ventes, espèces à remettre, espèces remises et reste à remettre.")
@@ -620,6 +787,48 @@ public class ExtractionCatalog {
                 .filter("station", "o.station_id = :stationId")
                 .filter("pdv", "o.pdv_id = :pdvId")
                 .filter("employee", "o.actor_id = :employeeId"));
+    }
+
+    /** Relevés d'index des pistolets (POSTE, JOUR ou MOIS). */
+    private void pumpReport(String kind, String code, String label, String description) {
+        Extraction.Builder b = Extraction.of(code, "STOCKS", label, description)
+                .col("period", "Période", "MOIS".equals(kind) ? TEXT : DATE)
+                .col("started_at", "Début", DATETIME)
+                .col("ended_at", "Fin", DATETIME)
+                .col("station", "Station", TEXT)
+                .col("pump", "Pistolet", TEXT)
+                .col("product", "Produit", TEXT);
+        if ("POSTE".equals(kind)) {
+            b.col("operator", "Opérateur", TEXT).col("shift", "Poste", TEXT);
+        }
+        b.col("start_index", "Index début", QTY)
+                .col("end_index", "Index fin", QTY)
+                .sum("meter_volume", "Volume compteur (L)", QTY)
+                .sum("sold_volume", "Volume vendu (L)", QTY)
+                .sum("gap", "Écart (L)", QTY)
+                .sum("transactions", "Ventes", INT)
+                .sum("amount", "Montant (F)", MONEY)
+                .select("\s" + ("MOIS".equals(kind) ? "to_char(r.period_start, 'MM/YYYY')" : "r.period_start") + " AS period,"
+                        + " r.started_at, r.ended_at, st.short_name AS station, pu.code AS pump, pr.name AS product,"
+                        + ("POSTE".equals(kind) ? " " + person("e") + " AS operator, COALESCE(sc.name, 'Poste') AS shift," : "")
+                        + " r.start_index, r.end_index, r.meter_volume, r.sold_volume, r.gap, r.transactions, r.amount")
+                .from("""
+                        \spump_report r
+                        JOIN pump pu ON pu.id = r.pump_id
+                        JOIN station st ON st.id = r.station_id
+                        JOIN product pr ON pr.id = r.product_id
+                        LEFT JOIN employee_shift es ON es.id = r.employee_shift_id
+                        LEFT JOIN employee e ON e.id = es.employee_id
+                        LEFT JOIN shift_config sc ON sc.id = es.config_id""")
+                .where("r.kind = '" + kind + "'")
+                .orderBy("r.period_start DESC, r.started_at DESC, st.short_name, pu.code")
+                .filter("period", "r.started_at")
+                .filter("station", "r.station_id = :stationId")
+                .filter("product", "r.product_id = :productId");
+        if ("POSTE".equals(kind)) {
+            b.filter("employee", "es.employee_id = :employeeId").filter("shift", "r.employee_shift_id = :shiftId");
+        }
+        add(b);
     }
 
     private void add(Extraction.Builder b) {

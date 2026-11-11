@@ -21,6 +21,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import tg.zener.station.common.ApiException;
 import tg.zener.station.common.Db;
+import tg.zener.station.tanks.TankService;
 import tg.zener.station.common.Refs;
 import tg.zener.station.common.Settings;
 import tg.zener.station.journal.Journal;
@@ -34,14 +35,16 @@ public class StockController {
 
     private final Db db;
     private final StockService stock;
+    private final TankService tanks;
     private final ThresholdService thresholds;
     private final Refs refs;
     private final Journal journal;
     private final Settings settings;
 
     public StockController(Db db, StockService stock, ThresholdService thresholds, Refs refs, Journal journal,
-                           Settings settings) {
+                           Settings settings, TankService tanks) {
         this.db = db;
+        this.tanks = tanks;
         this.stock = stock;
         this.thresholds = thresholds;
         this.refs = refs;
@@ -157,8 +160,13 @@ public class StockController {
         return gasBottles(f.stationId());
     }
 
+    /**
+     * Entrée de stock. Pour le carburant, quantity est le volume reçu en cuve ; les champs du bon de livraison
+     * (fournisseur, camion, chauffeur, n° et volume du bon, densité, température) sont facultatifs.
+     */
     public record Entry(Long stationId, Long pdvId, @NotBlank String productCode, @NotNull @Positive BigDecimal quantity,
-                        Long tankId, String note) {}
+                        Long tankId, String note, @Positive BigDecimal ticketVolume, String supplier, String truckPlate,
+                        String driver, String ticketNumber, BigDecimal density, BigDecimal temperature) {}
 
     /** Entrée de stock (livraison reçue) : cuve pour le carburant, stock d'article sinon. */
     @PostMapping("/entries")
@@ -174,9 +182,11 @@ public class StockController {
                 throw new ApiException("Station requise pour une livraison de carburant");
             }
             long tank = f.tankId() != null ? f.tankId() : stock.tankFor(station, productId);
-            stock.moveTank(tank, f.quantity(), "LIVRAISON", null, u.id(), f.note());
-            journal.log("ENTREE_STOCK", Journal.MODIFICATIONS, "Livraison de carburant",
-                    p.get("name") + " · " + StockService.qty(f.quantity()) + " L", null, station, null);
+            Auth.checkStation(db.value("SELECT station_id FROM tank WHERE id = :t", Db.p("t", tank), Long.class));
+            // réception (dépotage) : bon du fournisseur et volume reçu, écart conservé ; journalisée par TankService
+            tanks.receive(tank, new TankService.Reception(f.ticketVolume() != null ? f.ticketVolume() : f.quantity(), f.quantity(),
+                    null, f.supplier(), f.truckPlate(), f.driver(), f.ticketNumber(), f.density(), f.temperature(), null, null,
+                    f.note()), u.id());
         } else {
             Long station = f.pdvId() == null ? Auth.scopedStation(f.stationId()) : null;
             stock.move(station, f.pdvId(), productId, f.quantity(), "ENTREE", null, u.id(), f.note());
@@ -209,6 +219,10 @@ public class StockController {
                     \sSELECT quantity FROM stock_level WHERE product_id = :p
                       AND (station_id = :s OR pdv_id = :pv)""", Db.p("p", p.get("id"), "s", station, "pv", f.pdvId()), BigDecimal.class);
             BigDecimal delta = l.counted().subtract(book == null ? BigDecimal.ZERO : book);
+            db.update("""
+                    \sINSERT INTO stock_count (station_id, pdv_id, product_id, book_quantity, counted_quantity, gap, employee_id)
+                    VALUES (:s, :pv, :p, :b, :c, :g, :e)""", Db.p("s", station, "pv", f.pdvId(), "p", p.get("id"),
+                    "b", book == null ? BigDecimal.ZERO : book, "c", l.counted(), "g", delta, "e", u.id()));
             if (delta.signum() != 0) {
                 stock.move(station, f.pdvId(), ((Number) p.get("id")).longValue(), delta, "INVENTAIRE", null, u.id(),
                         "Compté " + l.counted().stripTrailingZeros().toPlainString());
