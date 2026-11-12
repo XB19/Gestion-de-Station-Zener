@@ -22,12 +22,13 @@ import org.springframework.web.bind.annotation.RestController;
 import tg.zener.station.cards.CardService;
 import tg.zener.station.common.ApiException;
 import tg.zener.station.common.Db;
-import tg.zener.station.tanks.TankService;
 import tg.zener.station.common.LiveFeed;
+import tg.zener.station.fleets.FleetService;
 import tg.zener.station.mobility.Tracking;
 import tg.zener.station.sales.SaleService;
 import tg.zener.station.stations.StationService;
 import tg.zener.station.stock.StockService;
+import tg.zener.station.tanks.TankService;
 
 /**
  * API du PC station. Le hub de la station envoie un flux binaire sur un port série ; le programme
@@ -42,15 +43,17 @@ public class HubController {
     private final StationService stations;
     private final StockService stock;
     private final TankService tanks;
+    private final FleetService fleets;
     private final CardService cards;
     private final SaleService sales;
     private final Tracking tracking;
     private final LiveFeed live;
 
     public HubController(Db db, StationService stations, StockService stock, CardService cards, SaleService sales,
-                         Tracking tracking, LiveFeed live, TankService tanks) {
+                         Tracking tracking, LiveFeed live, TankService tanks, FleetService fleets) {
         this.db = db;
         this.tanks = tanks;
+        this.fleets = fleets;
         this.stations = stations;
         this.stock = stock;
         this.cards = cards;
@@ -194,7 +197,8 @@ public class HubController {
     // ------------------------------------------------------------------ ventes
 
     public record HubSale(@NotNull UUID uuid, String pumpCode, String port, @NotNull @Positive BigDecimal liters,
-                          String paymentMethod, String paymentRef, String cardNumber, String pin, Instant at) {}
+                          String paymentMethod, String paymentRef, String cardNumber, String pin, Instant at,
+                          Integer odometerKm) {}
 
     /**
      * Vente carburant relevée par le hub. Idempotente (uuid) : un renvoi après une coupure ne crée
@@ -229,6 +233,7 @@ public class HubController {
                 num(pump.get("id")), List.of(new SaleService.Line((String) pump.get("productCode"), f.liters(), false)),
                 payment, f.paymentRef(), byCard ? f.cardNumber() : null, f.pin(), false,
                 "AUTONOME".equals(s.get("mode")) ? null : employee, at, late, null));
+        fleets.odometer(num(sale.get("id")), f.odometerKm());
         db.update("UPDATE pump SET state = 'LIBRE', current_volume = NULL WHERE id = :id AND state = 'DISTRIBUE'",
                 Db.p("id", pump.get("id")));
         return sale;

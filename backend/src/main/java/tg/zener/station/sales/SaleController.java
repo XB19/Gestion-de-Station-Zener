@@ -25,6 +25,7 @@ import tg.zener.station.cards.CardService;
 import tg.zener.station.common.ApiException;
 import tg.zener.station.common.Db;
 import tg.zener.station.common.Page;
+import tg.zener.station.fleets.FleetService;
 import tg.zener.station.security.Auth;
 import tg.zener.station.security.CurrentUser;
 
@@ -35,15 +36,18 @@ public class SaleController {
 
     private final Db db;
     private final SaleService sales;
+    private final FleetService fleets;
 
-    public SaleController(Db db, SaleService sales) {
+    public SaleController(Db db, SaleService sales, FleetService fleets) {
         this.db = db;
         this.sales = sales;
+        this.fleets = fleets;
     }
 
+    /** Vente à la pompe ; odometerKm : kilométrage du véhicule au plein (cartes de flotte, facultatif). */
     public record FuelSale(UUID uuid, @NotNull Long pumpId, @NotNull @Positive BigDecimal liters,
                            @NotBlank @Pattern(regexp = "ESPECES|MOBILE_MONEY|CARTE") String paymentMethod,
-                           String paymentRef, String cardNumber, String pin) {}
+                           String paymentRef, String cardNumber, String pin, @jakarta.validation.constraints.Min(0) Integer odometerKm) {}
 
     /** Vente à la pompe par le pompiste (mode conventionnel). */
     @PostMapping("/fuel")
@@ -58,9 +62,11 @@ public class SaleController {
         if ("HORS_SERVICE".equals(pump.get("state"))) {
             throw ApiException.conflict("Ce pistolet est hors service");
         }
-        return sales.record(new SaleService.Sale(f.uuid(), stationId, null, "CARBURANT", "POMPE", f.pumpId(),
+        Map<String, Object> sale = sales.record(new SaleService.Sale(f.uuid(), stationId, null, "CARBURANT", "POMPE", f.pumpId(),
                 List.of(new SaleService.Line((String) pump.get("code"), f.liters(), false)), f.paymentMethod(), f.paymentRef(),
                 f.cardNumber(), f.pin(), false, u.id(), null, false, null));
+        fleets.odometer(((Number) sale.get("id")).longValue(), f.odometerKm());
+        return sale;
     }
 
     public record ShopLine(@NotBlank String productCode, @NotNull @Positive BigDecimal quantity, Boolean withDeposit) {}

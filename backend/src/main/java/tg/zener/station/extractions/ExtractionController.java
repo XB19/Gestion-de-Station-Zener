@@ -151,6 +151,11 @@ public class ExtractionController {
         out.put("products", db.list("""
                 \sSELECT id, name, category, unit FROM product WHERE category <> 'CARTE'
                 ORDER BY CASE category WHEN 'CARBURANT' THEN 1 WHEN 'GAZ' THEN 2 WHEN 'LUBRIFIANT' THEN 3 ELSE 4 END, name"""));
+        out.put("vehicles", scope != null ? List.of() : db.list("""
+                \sSELECT v.id, v.plate, v.holder_id, v.group_id, NULLIF(concat_ws(' ', v.brand, v.model), '') AS label
+                FROM vehicle v ORDER BY v.plate"""));
+        out.put("drivers", scope != null ? List.of() : db.list("""
+                \sSELECT d.id, d.name, d.holder_id, d.group_id FROM driver d ORDER BY d.name"""));
         out.put("groups", db.list("""
                 \sSELECT g.id, g.name, g.holder_id, h.name AS holder_name
                 FROM card_group g JOIN holder h ON h.id = g.holder_id ORDER BY h.name, g.name"""));

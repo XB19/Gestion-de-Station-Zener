@@ -38,6 +38,11 @@ public class Refs {
         return "DEP-" + Year.now() + "-" + next("ref_reception_seq");
     }
 
+    /** Recharge d'un compte flotte : RCF-2026-1001. */
+    public String fleetRecharge() {
+        return "RCF-" + Year.now() + "-" + next("ref_fleet_recharge_seq");
+    }
+
     public String pdv() {
         return "PDV-" + next("ref_pdv_seq");
     }

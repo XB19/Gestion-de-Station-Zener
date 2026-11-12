@@ -52,7 +52,8 @@ public class CardController {
             LEFT JOIN LATERAL (
                 SELECT * FROM (
                     SELECT m.at, CASE m.kind WHEN 'RECHARGE' THEN CASE WHEN r.channel = 'MASSE' THEN 'Recharge masse' ELSE 'Recharge' END
-                                             WHEN 'VENTE' THEN 'Vente ' || COALESCE(m.detail, '') ELSE 'Ajustement' END AS label
+                                             WHEN 'VENTE' THEN 'Vente ' || COALESCE(m.detail, '') WHEN 'DOTATION' THEN 'Dotation flotte'
+                                             WHEN 'REPRISE' THEN 'Reprise flotte' ELSE 'Ajustement' END AS label
                     FROM card_movement m LEFT JOIN recharge r ON r.id = m.recharge_id
                     WHERE m.card_id = c.id
                     UNION ALL

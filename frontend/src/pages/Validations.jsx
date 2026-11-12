@@ -9,7 +9,10 @@ import { useSession } from '../api/session.jsx';
 import { ago, avatarColor, dateTime, dayMonth, exportCsv, fcfa, money, num } from '../lib/format.js';
 
 const ROLE_LABELS = { COMPTABLE: 'Comptable', DAF: 'DAF', ADMIN: 'Admin' };
-const KIND_LABELS = { RECHARGE: 'Recharge', RECHARGE_MASSE: 'Recharge en masse', OUVERTURE_PDV: 'Ouverture de point de vente' };
+const KIND_LABELS = {
+  RECHARGE: 'Recharge', RECHARGE_MASSE: 'Recharge en masse', OUVERTURE_PDV: 'Ouverture de point de vente',
+  RECHARGE_FLOTTE: 'Recharge de compte flotte',
+};
 
 function Detail({ label, value }) {
   return (
@@ -115,7 +118,8 @@ export default function Validations() {
           <div className="row between">
             <div className="card-title">Demandes en attente</div>
             <Select value={kind} onChange={setKind} placeholder="Toutes"
-              options={[{ value: 'RECHARGE', label: 'Recharges' }, { value: 'RECHARGE_MASSE', label: 'En masse' }, { value: 'OUVERTURE_PDV', label: 'Points de vente' }]} />
+              options={[{ value: 'RECHARGE', label: 'Recharges' }, { value: 'RECHARGE_MASSE', label: 'En masse' }, { value: 'RECHARGE_FLOTTE', label: 'Comptes flotte' },
+                { value: 'OUVERTURE_PDV', label: 'Points de vente' }]} />
           </div>
           <div className="stack" style={{ gap: 10, marginTop: 16 }}>
             {pending.data?.items.length === 0 && <Empty>Aucune demande en attente</Empty>}

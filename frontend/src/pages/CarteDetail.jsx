@@ -33,6 +33,7 @@ function operationLabel(o) {
     return `Recharge ${c}`.trim();
   }
   if (o.kind === 'AJUSTEMENT') return `Ajustement · ${o.detail || ''}`;
+  if (o.kind === 'DOTATION' || o.kind === 'REPRISE') return o.detail;
   return /^vente/i.test(o.detail || '') ? o.detail : `Vente ${o.detail || ''}`.trim();
 }
 

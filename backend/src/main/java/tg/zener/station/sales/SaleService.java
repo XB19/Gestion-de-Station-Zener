@@ -126,8 +126,9 @@ public class SaleService {
         Long shift = s.employeeId() == null || s.stationId() == null ? null : openShift(s.employeeId(), s.stationId());
         long saleId = db.insert("""
                 \sINSERT INTO sale (uuid, at, kind, channel, station_id, pdv_id, pump_id, mode, employee_id, employee_shift_id,
-                                  payment_method, payment_ref, card_id, buyer_profile, total, synced_at)
-                VALUES (:uuid, :at, :k, :ch, :s, :pv, :pump, :mode, :e, :sh, :pm, :pr, :card, :prof, :t, :sync)""",
+                                  payment_method, payment_ref, card_id, buyer_profile, total, synced_at, vehicle_id, driver_id)
+                VALUES (:uuid, :at, :k, :ch, :s, :pv, :pump, :mode, :e, :sh, :pm, :pr, :card, :prof, :t, :sync,
+                        (SELECT vehicle_id FROM card WHERE id = :card), (SELECT driver_id FROM card WHERE id = :card))""",
                 Db.p("uuid", s.uuid() == null ? UUID.randomUUID() : s.uuid(), "at", java.sql.Timestamp.from(at), "k", s.kind(),
                         "ch", s.channel(), "s", s.stationId(), "pv", s.pdvId(), "pump", s.pumpId(), "mode", mode, "e", s.employeeId(),
                         "sh", shift, "pm", s.paymentMethod(), "pr", s.paymentRef(), "card", card == null ? null : card.get("id"),

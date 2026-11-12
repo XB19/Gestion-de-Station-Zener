@@ -355,6 +355,8 @@ public class ExtractionService {
         label(out, "Carte", f.cardId(), "SELECT substr(number, 1, 4) || ' ' || substr(number, 5, 4) || ' ' || substr(number, 9, 4) FROM card WHERE id = :id");
         label(out, "Client", f.holderId(), "SELECT name FROM holder WHERE id = :id");
         label(out, "Groupe de cartes", f.groupId(), "SELECT name FROM card_group WHERE id = :id");
+        label(out, "Véhicule", f.vehicleId(), "SELECT plate || COALESCE(' · ' || brand, '') FROM vehicle WHERE id = :id");
+        label(out, "Chauffeur", f.driverId(), "SELECT name FROM driver WHERE id = :id");
         label(out, "Produit", f.productId(), "SELECT name FROM product WHERE id = :id");
         label(out, "Opérateur", f.employeeId(), "SELECT first_name || ' ' || last_name FROM employee WHERE id = :id");
         label(out, "Poste", f.shiftId(), """

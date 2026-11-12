@@ -80,12 +80,13 @@ public class DemoSimulator {
     private final CardEvents cardEvents;
     private final TankService tanks;
     private final DemoTanks demoTanks;
+    private final DemoFleets demoFleets;
     private final Map<Long, CurrentUser> userCache = new ConcurrentHashMap<>();
     private volatile boolean started;
 
     public DemoSimulator(Db db, SaleService sales, PdvService pdvs, RechargeService recharges, ShiftService shifts, StockService stock,
                          DeliveryService deliveries, Tracking tracking, Settings settings, UserLoader users, Journal journal,
-                         LiveFeed live, CardEvents cardEvents, TankService tanks, DemoTanks demoTanks,
+                         LiveFeed live, CardEvents cardEvents, TankService tanks, DemoTanks demoTanks, DemoFleets demoFleets,
                          @Value("${app.demo-data}") boolean enabled) {
         this.db = db;
         this.sales = sales;
@@ -102,6 +103,7 @@ public class DemoSimulator {
         this.cardEvents = cardEvents;
         this.tanks = tanks;
         this.demoTanks = demoTanks;
+        this.demoFleets = demoFleets;
         this.enabled = enabled;
     }
 
@@ -491,6 +493,11 @@ public class DemoSimulator {
         for (Map<String, Object> c : db.list("""
                 \sSELECT number, balance FROM card WHERE status = 'ACTIVE' AND number = ANY(:n) AND balance < 250000""",
                 Db.p("n", db.array("text", CARDS.stream().map(DemoCard::number).toArray())))) {
+            // carte d'une flotte dotée : le compte flotte la recrédite ; sinon recharge directe à distance
+            Long admin = db.value("SELECT id FROM employee WHERE role_code = 'ADMIN' AND active ORDER BY id LIMIT 1", Map.of(), Long.class);
+            if (admin != null && demoFleets.topUp((String) c.get("number"), 450_000, admin)) {
+                continue;
+            }
             recharges.recharge(new RechargeService.Request((String) c.get("number"), 450_000, "DISTANCE", "VIREMENT",
                     "VIR-" + (10_000 + rnd.nextInt(89_999)), null, null), user(manager));
         }

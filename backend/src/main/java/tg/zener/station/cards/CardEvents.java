@@ -25,6 +25,7 @@ public class CardEvents {
     public static final String RETOUR_STOCK = "RETOUR_STOCK";
     public static final String VENTE_PDV = "VENTE_PDV";
     public static final String DESACTIVATION = "DESACTIVATION";
+    public static final String AFFECTATION = "AFFECTATION";
 
     /** Libellés français (écrans et extractions). */
     public static final String LABEL_SQL = """
@@ -32,7 +33,8 @@ public class CardEvents {
                          WHEN 'ACTIVATION' THEN 'Activation' WHEN 'BLOCAGE' THEN 'Blocage' WHEN 'DEBLOCAGE' THEN 'Déblocage'
                          WHEN 'PIN' THEN 'Code PIN' WHEN 'ATTRIBUTION_PDV' THEN 'Attribution à un PDV'
                          WHEN 'RETOUR_STOCK' THEN 'Retour au stock' WHEN 'VENTE_PDV' THEN 'Vente en PDV'
-                         WHEN 'DESACTIVATION' THEN 'Désactivation' WHEN 'REMPLACEMENT' THEN 'Remplacement' ELSE ce.kind END""";
+                         WHEN 'DESACTIVATION' THEN 'Désactivation' WHEN 'REMPLACEMENT' THEN 'Remplacement'
+                         WHEN 'AFFECTATION' THEN 'Affectation véhicule / chauffeur' ELSE ce.kind END""";
 
     private final Db db;
 

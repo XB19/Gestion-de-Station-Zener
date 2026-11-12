@@ -6,6 +6,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import tg.zener.station.common.Db;
 
 /**
@@ -37,9 +39,11 @@ public class PumpReportService {
                 WHERE x.pump_id = p.id AND x.at >= :a AND x.at < :b) sv ON true""";
 
     private final Db db;
+    private final TransactionTemplate tx;
 
-    public PumpReportService(Db db) {
+    public PumpReportService(Db db, PlatformTransactionManager tm) {
         this.db = db;
+        this.tx = new TransactionTemplate(tm);
     }
 
     @Scheduled(cron = "0 */5 * * * *", zone = "${app.timezone}")
@@ -51,9 +55,17 @@ public class PumpReportService {
         }
     }
 
-    /** Génère les relevés manquants (postes clos, jours et mois écoulés). Renvoie le nombre de lignes créées. */
-    public synchronized int generate() {
-        return shifts() + days() + months();
+    /**
+     * Génère les relevés manquants (postes clos, jours et mois écoulés). Renvoie le nombre de lignes créées.
+     * Une seule génération à la fois, sérialisée par un verrou PostgreSQL de transaction (pris avant toute écriture) :
+     * le job et une génération lancée dans une autre transaction (démonstration, bouton) s'attendent sans s'interbloquer.
+     */
+    public int generate() {
+        Integer n = tx.execute(s -> {
+            db.count("SELECT count(*) FROM (SELECT pg_advisory_xact_lock(4206001)) l", Map.of());
+            return shifts() + days() + months();
+        });
+        return n == null ? 0 : n;
     }
 
     /** Postes clos depuis moins de BACKFILL_DAYS jours sans relevé : pistolets du poste ou ayant servi pendant le poste. */

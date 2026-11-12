@@ -9,15 +9,17 @@ import tg.zener.station.common.ApiException;
 
 /** Filtres communs à toutes les extractions (paramètres de la requête HTTP). */
 public record ExtractionFilters(LocalDate from, LocalDate to, Long stationId, Long pdvId, Long cardId, Long holderId,
-                                Long groupId, Long productId, Long employeeId, Long shiftId) {
+                                Long groupId, Long productId, Long employeeId, Long shiftId, Long vehicleId, Long driverId) {
 
     /** Noms des filtres, dans l'ordre d'affichage. */
-    public static final List<String> NAMES = List.of("period", "station", "pdv", "card", "holder", "group", "product",
-            "employee", "shift");
+    public static final List<String> NAMES = List.of("period", "station", "pdv", "card", "holder", "group", "vehicle", "driver",
+            "product", "employee", "shift");
 
     /** Paramètre HTTP de chaque filtre (hors période : from / to). */
-    static final Map<String, String> PARAMS = Map.of("station", "stationId", "pdv", "pdvId", "card", "cardId",
-            "holder", "holderId", "group", "groupId", "product", "productId", "employee", "employeeId", "shift", "shiftId");
+    static final Map<String, String> PARAMS = Map.ofEntries(Map.entry("station", "stationId"), Map.entry("pdv", "pdvId"),
+            Map.entry("card", "cardId"), Map.entry("holder", "holderId"), Map.entry("group", "groupId"),
+            Map.entry("product", "productId"), Map.entry("employee", "employeeId"), Map.entry("shift", "shiftId"),
+            Map.entry("vehicle", "vehicleId"), Map.entry("driver", "driverId"));
 
     public static ExtractionFilters parse(Map<String, String> q) {
         LocalDate from = date(q, "from");
@@ -26,11 +28,12 @@ public record ExtractionFilters(LocalDate from, LocalDate to, Long stationId, Lo
             throw new ApiException("La date de fin précède la date de début");
         }
         return new ExtractionFilters(from, to, id(q, "stationId"), id(q, "pdvId"), id(q, "cardId"), id(q, "holderId"),
-                id(q, "groupId"), id(q, "productId"), id(q, "employeeId"), id(q, "shiftId"));
+                id(q, "groupId"), id(q, "productId"), id(q, "employeeId"), id(q, "shiftId"), id(q, "vehicleId"), id(q, "driverId"));
     }
 
     public ExtractionFilters withStation(Long station) {
-        return new ExtractionFilters(from, to, station, pdvId, cardId, holderId, groupId, productId, employeeId, shiftId);
+        return new ExtractionFilters(from, to, station, pdvId, cardId, holderId, groupId, productId, employeeId, shiftId, vehicleId,
+                driverId);
     }
 
     /** Valeur du filtre (nul s'il n'est pas renseigné). */
@@ -45,6 +48,8 @@ public record ExtractionFilters(LocalDate from, LocalDate to, Long stationId, Lo
             case "product" -> productId;
             case "employee" -> employeeId;
             case "shift" -> shiftId;
+            case "vehicle" -> vehicleId;
+            case "driver" -> driverId;
             default -> null;
         };
     }
@@ -62,6 +67,8 @@ public record ExtractionFilters(LocalDate from, LocalDate to, Long stationId, Lo
         p.put("productId", productId);
         p.put("employeeId", employeeId);
         p.put("shiftId", shiftId);
+        p.put("vehicleId", vehicleId);
+        p.put("driverId", driverId);
         return p;
     }
 

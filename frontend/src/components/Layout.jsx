@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import {
   LayoutGrid, Fuel, Store, CreditCard, Wallet, ShieldCheck, ShoppingCart, Users, Building2,
-  FileBarChart, ScrollText, Settings, LogOut, Search, Bell, ChevronDown, Globe, TriangleAlert, Truck, Timer, Database,
+  FileBarChart, ScrollText, Settings, LogOut, Search, Bell, ChevronDown, Globe, TriangleAlert, Truck, Timer, Database, CarFront,
 } from 'lucide-react';
 import ZenerLogo from './ZenerLogo.jsx';
 import { Avatar, IcoBox } from './ui.jsx';
@@ -28,6 +28,7 @@ const NAV = [
     items: [
       { to: '/cartes', label: 'Cartes', icon: CreditCard, rights: ['CARTES_GERER', 'CARTES_ACTIVER', 'RECHARGER', 'CARTES_EMPLOYES'] },
       { to: '/rechargements', label: 'Rechargements', icon: Wallet, rights: ['RECHARGER', 'TRANSACTIONS'] },
+      { to: '/flottes', label: 'Flottes', icon: CarFront, rights: ['FLOTTES', 'VALIDER_MONTANTS'] },
       { to: '/validations', label: 'Validations', icon: ShieldCheck, badge: true,
         rights: ['VALIDER_MONTANTS', 'PDV_VALIDER', 'RECHARGER', 'TRANSACTIONS'] },
     ],

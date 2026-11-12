@@ -27,6 +27,7 @@ public class ExtractionCatalog {
     static {
         SECTIONS.put("CARTES", "Cartes et clients");
         SECTIONS.put("MOUVEMENTS", "Recharges et mouvements");
+        SECTIONS.put("FLOTTES", "Flottes, véhicules et chauffeurs");
         SECTIONS.put("VENTES", "Ventes");
         SECTIONS.put("STOCKS", "Pistolets, cuves et stocks");
         SECTIONS.put("OPERATEURS", "Opérateurs et postes");
@@ -94,7 +95,8 @@ public class ExtractionCatalog {
                 .col("shift", "Poste", TEXT)
                 .col("balance_after", "Solde après (F)", MONEY)
                 .select("\sm.at AS date, " + cardNo("c") + " AS card, h.name AS holder, g.name AS card_group,"
-                        + " CASE m.kind WHEN 'VENTE' THEN 'Achat' WHEN 'RECHARGE' THEN 'Recharge' ELSE 'Ajustement' END AS operation,"
+                        + " CASE m.kind WHEN 'VENTE' THEN 'Achat' WHEN 'RECHARGE' THEN 'Recharge' WHEN 'DOTATION' THEN 'Dotation flotte'"
+                        + " WHEN 'REPRISE' THEN 'Reprise flotte' ELSE 'Ajustement' END AS operation,"
                         + " COALESCE(st.short_name, pv.name) AS place, pu.code AS pump, pr.name AS product, l.quantity, pr.unit,"
                         + " l.unit_price, CASE WHEN l.id IS NULL THEN m.amount ELSE -l.amount END AS amount,"
                         + " " + person("e") + " AS operator, " + SHIFT_LABEL + " AS shift, m.balance_after")
@@ -278,10 +280,12 @@ public class ExtractionCatalog {
                 .col("operator", "Opérateur", TEXT)
                 .col("detail", "Détail", TEXT)
                 .select("\sm.at AS date, " + cardNo("c") + " AS card, h.name AS holder,"
-                        + " CASE m.kind WHEN 'VENTE' THEN 'Achat' WHEN 'RECHARGE' THEN 'Recharge' ELSE 'Ajustement' END AS nature,"
+                        + " CASE m.kind WHEN 'VENTE' THEN 'Achat' WHEN 'RECHARGE' THEN 'Recharge' WHEN 'DOTATION' THEN 'Dotation flotte'"
+                        + " WHEN 'REPRISE' THEN 'Reprise flotte' ELSE 'Ajustement' END AS nature,"
                         + " CASE WHEN m.amount > 0 THEN m.amount END AS credit, CASE WHEN m.amount < 0 THEN -m.amount END AS debit,"
                         + " m.balance_after,"
                         + " CASE WHEN r.id IS NOT NULL THEN 'Recharge ' || r.ref WHEN x.id IS NOT NULL THEN 'Vente n° ' || x.id"
+                        + " WHEN m.fleet_movement_id IS NOT NULL THEN 'Compte flotte'"
                         + " ELSE 'Ajustement' END AS source,"
                         + " COALESCE(st.short_name, pv.name) AS place, " + person("e") + " AS operator, m.detail")
                 .from("""
@@ -302,6 +306,185 @@ public class ExtractionCatalog {
                 .filter("group", "c.group_id = :groupId")
                 .filter("employee", "m.employee_id = :employeeId")
                 .filter("shift", "x.employee_shift_id = :shiftId"));
+
+        // ============================================================== Flottes, véhicules et chauffeurs
+        add(Extraction.of("flottes", "FLOTTES", "Flottes et comptes flotte",
+                        "Chaque flotte d'entreprise : contact, cartes, véhicules, chauffeurs, solde du compte flotte et des cartes, consommation.")
+                .col("holder", "Entreprise", TEXT)
+                .col("fleet", "Flotte", TEXT)
+                .col("code", "Code", TEXT)
+                .col("contact", "Contact", TEXT)
+                .col("phone", "Téléphone", TEXT)
+                .sum("cards", "Cartes", INT)
+                .sum("vehicles", "Véhicules", INT)
+                .sum("drivers", "Chauffeurs", INT)
+                .sum("account_balance", "Compte flotte (F)", MONEY)
+                .sum("cards_balance", "Soldes des cartes (F)", MONEY)
+                .sum("liters", "Carburant (L)", QTY)
+                .sum("spent", "Consommation (F)", MONEY)
+                .col("state", "État", TEXT)
+                .select("\sh.name AS holder, g.name AS fleet, g.code, g.contact_name AS contact, COALESCE(g.phone, h.phone) AS phone,"
+                        + " (SELECT count(*) FROM card c WHERE c.group_id = g.id AND c.status <> 'INACTIVE') AS cards,"
+                        + " (SELECT count(*) FROM vehicle v WHERE v.group_id = g.id AND v.active) AS vehicles,"
+                        + " (SELECT count(*) FROM driver d WHERE d.group_id = g.id AND d.active) AS drivers,"
+                        + " g.balance AS account_balance, (SELECT COALESCE(sum(c.balance), 0) FROM card c WHERE c.group_id = g.id) AS cards_balance,"
+                        + " COALESCE(cs.liters, 0) AS liters, COALESCE(cs.spent, 0) AS spent,"
+                        + " CASE WHEN g.active THEN 'Active' ELSE 'Désactivée' END AS state")
+                .from("""
+                        \scard_group g
+                        JOIN holder h ON h.id = g.holder_id
+                        LEFT JOIN LATERAL (
+                            SELECT sum(l.quantity) FILTER (WHERE p.category = 'CARBURANT') AS liters, sum(l.amount) AS spent
+                            FROM sale x JOIN sale_line l ON l.sale_id = x.id JOIN product p ON p.id = l.product_id
+                            JOIN card c ON c.id = x.card_id
+                            WHERE c.group_id = g.id
+                              AND (CAST(:from AS timestamptz) IS NULL OR x.at >= :from)
+                              AND (CAST(:to AS timestamptz) IS NULL OR x.at < :to)) cs ON true""")
+                .where("h.kind = 'ENTREPRISE'")
+                .orderBy("h.name, g.name")
+                .filter("holder", "g.holder_id = :holderId")
+                .filter("group", "g.id = :groupId"));
+
+        add(Extraction.of("compte-flotte", "FLOTTES", "Mouvements des comptes flotte",
+                        "Recharges du compte flotte, dotations des cartes et reprises : montants, soldes avant / après du compte et de la carte.")
+                .col("date", "Date", DATETIME)
+                .col("holder", "Entreprise", TEXT)
+                .col("fleet", "Flotte", TEXT)
+                .col("nature", "Nature", TEXT)
+                .sum("credit", "Crédit du compte (F)", MONEY)
+                .sum("debit", "Débit du compte (F)", MONEY)
+                .col("balance_after", "Solde du compte après (F)", MONEY)
+                .col("card", "Carte", TEXT)
+                .col("driver", "Chauffeur", TEXT)
+                .col("vehicle", "Véhicule", TEXT)
+                .col("card_balance_before", "Carte avant (F)", MONEY)
+                .col("card_balance_after", "Carte après (F)", MONEY)
+                .col("ref", "Référence", TEXT)
+                .col("operator", "Opérateur", TEXT)
+                .col("note", "Note", TEXT)
+                .select("\sm.at AS date, h.name AS holder, g.name AS fleet,"
+                        + " CASE m.kind WHEN 'RECHARGE' THEN 'Recharge du compte' WHEN 'DOTATION' THEN 'Dotation de la carte'"
+                        + " WHEN 'REPRISE' THEN 'Reprise sur la carte' ELSE 'Ajustement' END AS nature,"
+                        + " CASE WHEN m.amount > 0 THEN m.amount END AS credit, CASE WHEN m.amount < 0 THEN -m.amount END AS debit,"
+                        + " m.balance_after, CASE WHEN c.id IS NULL THEN NULL ELSE " + cardNo("c") + " END AS card,"
+                        + " d.name AS driver, v.plate AS vehicle, m.card_balance_before, m.card_balance_after, r.ref,"
+                        + " " + person("e") + " AS operator, m.note")
+                .from("""
+                        \sfleet_movement m
+                        JOIN card_group g ON g.id = m.group_id
+                        JOIN holder h ON h.id = g.holder_id
+                        LEFT JOIN card c ON c.id = m.card_id
+                        LEFT JOIN driver d ON d.id = c.driver_id
+                        LEFT JOIN vehicle v ON v.id = c.vehicle_id
+                        LEFT JOIN fleet_recharge r ON r.id = m.fleet_recharge_id
+                        LEFT JOIN employee e ON e.id = m.employee_id""")
+                .orderBy("m.at DESC, m.id DESC")
+                .filter("period", "m.at")
+                .filter("card", "m.card_id = :cardId")
+                .filter("holder", "g.holder_id = :holderId")
+                .filter("group", "m.group_id = :groupId")
+                .filter("vehicle", "c.vehicle_id = :vehicleId")
+                .filter("driver", "c.driver_id = :driverId")
+                .filter("employee", "m.employee_id = :employeeId"));
+
+        add(Extraction.of("vehicules", "FLOTTES", "Véhicules",
+                        "Parc des entreprises clientes : immatriculation, type, marque, carburant, réservoir, kilométrage, chauffeur et cartes.")
+                .col("plate", "Immatriculation", TEXT)
+                .col("type", "Type", TEXT)
+                .col("brand", "Marque", TEXT)
+                .col("model", "Modèle", TEXT)
+                .col("color", "Couleur", TEXT)
+                .col("holder", "Entreprise", TEXT)
+                .col("fleet", "Flotte", TEXT)
+                .col("fuel", "Carburant", TEXT)
+                .col("tank_capacity", "Réservoir (L)", QTY)
+                .col("odometer_km", "Kilométrage", INT)
+                .col("driver", "Chauffeur actuel", TEXT)
+                .col("cards", "Cartes", TEXT)
+                .col("state", "État", TEXT)
+                .select("\sv.plate, vt.label AS type, v.brand, v.model, v.color, h.name AS holder, g.name AS fleet, p.name AS fuel,"
+                        + " v.tank_capacity, v.odometer_km, d.name AS driver,"
+                        + " (SELECT string_agg(" + cardNo("c") + ", ', ') FROM card c WHERE c.vehicle_id = v.id) AS cards,"
+                        + " CASE WHEN v.active THEN 'Actif' ELSE 'Retiré' END AS state")
+                .from("""
+                        \svehicle v
+                        JOIN holder h ON h.id = v.holder_id
+                        JOIN vehicle_type vt ON vt.code = v.type_code
+                        LEFT JOIN card_group g ON g.id = v.group_id
+                        LEFT JOIN product p ON p.id = v.product_id
+                        LEFT JOIN vehicle_assignment a ON a.vehicle_id = v.id AND a.ended_at IS NULL
+                        LEFT JOIN driver d ON d.id = a.driver_id""")
+                .orderBy("h.name, v.plate")
+                .filter("holder", "v.holder_id = :holderId")
+                .filter("group", "v.group_id = :groupId")
+                .filter("vehicle", "v.id = :vehicleId")
+                .filter("driver", "a.driver_id = :driverId")
+                .filter("product", "v.product_id = :productId"));
+
+        add(Extraction.of("chauffeurs", "FLOTTES", "Chauffeurs",
+                        "Chauffeurs des entreprises clientes : téléphone, permis et échéance, véhicule conduit, cartes.")
+                .col("name", "Chauffeur", TEXT)
+                .col("phone", "Téléphone", TEXT)
+                .col("licence_number", "N° de permis", TEXT)
+                .col("licence_expires", "Fin de validité du permis", DATE)
+                .col("licence_state", "Permis", TEXT)
+                .col("holder", "Entreprise", TEXT)
+                .col("fleet", "Flotte", TEXT)
+                .col("vehicle", "Véhicule", TEXT)
+                .col("cards", "Cartes", TEXT)
+                .col("state", "État", TEXT)
+                .select("\sd.name, d.phone, d.licence_number, d.licence_expires,"
+                        + " CASE WHEN d.licence_expires IS NULL THEN NULL WHEN d.licence_expires < current_date THEN 'Expiré'"
+                        + " WHEN d.licence_expires < current_date + 30 THEN 'Expire bientôt' ELSE 'Valide' END AS licence_state,"
+                        + " h.name AS holder, g.name AS fleet, v.plate AS vehicle,"
+                        + " (SELECT string_agg(" + cardNo("c") + ", ', ') FROM card c WHERE c.driver_id = d.id) AS cards,"
+                        + " CASE WHEN d.active THEN 'Actif' ELSE 'Inactif' END AS state")
+                .from("""
+                        \sdriver d
+                        JOIN holder h ON h.id = d.holder_id
+                        LEFT JOIN card_group g ON g.id = d.group_id
+                        LEFT JOIN vehicle_assignment a ON a.driver_id = d.id AND a.ended_at IS NULL
+                        LEFT JOIN vehicle v ON v.id = a.vehicle_id""")
+                .orderBy("h.name, d.name")
+                .filter("holder", "d.holder_id = :holderId")
+                .filter("group", "d.group_id = :groupId")
+                .filter("vehicle", "a.vehicle_id = :vehicleId")
+                .filter("driver", "d.id = :driverId"));
+
+        add(Extraction.of("affectations", "FLOTTES", "Affectations véhicule / chauffeur",
+                        "Historique de qui a conduit quel véhicule, depuis quand et jusqu'à quand, et qui l'a enregistré.")
+                .col("started_at", "Début", DATETIME)
+                .col("ended_at", "Fin", DATETIME)
+                .col("vehicle", "Véhicule", TEXT)
+                .col("vehicle_type", "Type", TEXT)
+                .col("driver", "Chauffeur", TEXT)
+                .col("holder", "Entreprise", TEXT)
+                .col("fleet", "Flotte", TEXT)
+                .col("operator", "Opérateur", TEXT)
+                .col("note", "Note", TEXT)
+                .select("\sa.started_at, a.ended_at, v.plate AS vehicle, vt.label AS vehicle_type, d.name AS driver, h.name AS holder,"
+                        + " g.name AS fleet, " + person("e") + " AS operator, a.note")
+                .from("""
+                        \svehicle_assignment a
+                        JOIN vehicle v ON v.id = a.vehicle_id
+                        JOIN vehicle_type vt ON vt.code = v.type_code
+                        JOIN driver d ON d.id = a.driver_id
+                        JOIN holder h ON h.id = v.holder_id
+                        LEFT JOIN card_group g ON g.id = v.group_id
+                        LEFT JOIN employee e ON e.id = a.assigned_by""")
+                .orderBy("a.started_at DESC, a.id DESC")
+                .filter("period", "a.started_at")
+                .filter("holder", "v.holder_id = :holderId")
+                .filter("group", "v.group_id = :groupId")
+                .filter("vehicle", "a.vehicle_id = :vehicleId")
+                .filter("driver", "a.driver_id = :driverId")
+                .filter("employee", "a.assigned_by = :employeeId"));
+
+        consumption("consommation-vehicules", "Consommation par véhicule",
+                "Pleins, litres et montants par véhicule ; kilomètres parcourus et consommation aux 100 km quand le kilométrage est saisi.",
+                "x.vehicle_id", "v.plate", "Véhicule");
+        consumption("consommation-chauffeurs", "Consommation par chauffeur",
+                "Pleins, litres et montants par chauffeur, avec les véhicules utilisés.", "x.driver_id", "d.name", "Chauffeur");
 
         // ============================================================== Ventes
         add(saleFilters(Extraction.of("ventes-produits", "VENTES", "Ventes par produit",
@@ -787,6 +970,54 @@ public class ExtractionCatalog {
                 .filter("station", "o.station_id = :stationId")
                 .filter("pdv", "o.pdv_id = :pdvId")
                 .filter("employee", "o.actor_id = :employeeId"));
+    }
+
+    /** Consommation des cartes de flotte regroupée par véhicule ou par chauffeur (véhicule et chauffeur au moment du plein). */
+    private void consumption(String code, String label, String description, String key, String name, String header) {
+        add(Extraction.of(code, "FLOTTES", label, description)
+                .col("subject", header, TEXT)
+                .col("other", "x.vehicle_id".equals(key) ? "Chauffeurs" : "Véhicules", TEXT)
+                .col("holder", "Entreprise", TEXT)
+                .col("fleet", "Flotte", TEXT)
+                .sum("fills", "Pleins", INT)
+                .sum("liters", "Litres", QTY)
+                .sum("amount", "Montant (F)", MONEY)
+                .col("avg_fill", "Litres par plein", QTY)
+                .col("first_km", "Kilométrage début", INT)
+                .col("last_km", "Kilométrage fin", INT)
+                .sum("distance_km", "Km parcourus", INT)
+                .col("per_100km", "L / 100 km", QTY)
+                .col("first_at", "Premier plein", DATETIME)
+                .col("last_at", "Dernier plein", DATETIME)
+                .select("\s" + name + " AS subject, string_agg(DISTINCT " + ("x.vehicle_id".equals(key) ? "d.name" : "v.plate") + ", ', ') AS other,"
+                        + " h.name AS holder, g.name AS fleet, count(DISTINCT x.id) AS fills, sum(l.quantity) AS liters, sum(l.amount) AS amount, round(sum(l.quantity) / NULLIF(count(DISTINCT x.id), 0), 2) AS avg_fill,"
+                        + " min(x.odometer_km) AS first_km, max(x.odometer_km) AS last_km,"
+                        + " max(x.odometer_km) - min(x.odometer_km) AS distance_km,"
+                        // carburant consommé entre le premier et le dernier kilométrage : pleins avec kilométrage, moins le premier
+                        + " round(100 * (sum(l.quantity) FILTER (WHERE x.odometer_km IS NOT NULL)"
+                        + " - (array_agg(l.quantity ORDER BY x.odometer_km) FILTER (WHERE x.odometer_km IS NOT NULL))[1])"
+                        + " / NULLIF(max(x.odometer_km) - min(x.odometer_km), 0), 2) AS per_100km,"
+                        + " min(x.at) AS first_at, max(x.at) AS last_at")
+                .from("""
+                        \ssale x
+                        JOIN sale_line l ON l.sale_id = x.id
+                        JOIN product pr ON pr.id = l.product_id
+                        JOIN card c ON c.id = x.card_id
+                        JOIN holder h ON h.id = c.holder_id
+                        LEFT JOIN card_group g ON g.id = c.group_id
+                        LEFT JOIN vehicle v ON v.id = x.vehicle_id
+                        LEFT JOIN driver d ON d.id = x.driver_id""")
+                .where(key + " IS NOT NULL AND pr.category = 'CARBURANT'")
+                .groupBy(key + ", " + name + ", h.name, g.name")
+                .orderBy("sum(l.amount) DESC")
+                .filter("period", "x.at")
+                .filter("station", "x.station_id = :stationId")
+                .filter("card", "x.card_id = :cardId")
+                .filter("holder", "c.holder_id = :holderId")
+                .filter("group", "c.group_id = :groupId")
+                .filter("vehicle", "x.vehicle_id = :vehicleId")
+                .filter("driver", "x.driver_id = :driverId")
+                .filter("product", "l.product_id = :productId"));
     }
 
     /** Relevés d'index des pistolets (POSTE, JOUR ou MOIS). */

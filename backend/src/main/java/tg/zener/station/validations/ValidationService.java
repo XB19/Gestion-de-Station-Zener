@@ -25,6 +25,7 @@ public class ValidationService {
     public static final String RECHARGE = "RECHARGE";
     public static final String RECHARGE_MASSE = "RECHARGE_MASSE";
     public static final String OUVERTURE_PDV = "OUVERTURE_PDV";
+    public static final String RECHARGE_FLOTTE = "RECHARGE_FLOTTE";
 
     /** Publié quand une demande est entièrement approuvée ou refusée. */
     public record Decided(long requestId, String kind, Long targetId, boolean approved, long deciderId) {}
