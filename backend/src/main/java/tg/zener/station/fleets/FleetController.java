@@ -73,7 +73,9 @@ public class FleetController {
     public Map<String, Object> get(@PathVariable long id) {
         Map<String, Object> g = db.require("""
                 \sSELECT g.id, g.name, g.code, g.holder_id, h.name AS holder_name, g.contact_name, g.phone, g.address, g.note,
-                       g.active, g.balance, h.phone AS holder_phone, h.email AS holder_email
+                       g.active, g.balance, g.load_up_limit, g.recharge_fee_pct, h.phone AS holder_phone, h.email AS holder_email,
+                       (SELECT json_agg(json_build_object('id', o.id, 'name', o.name) ORDER BY o.name) FROM card_group o
+                        WHERE o.holder_id = g.holder_id AND o.id <> g.id) AS sister_fleets
                 FROM card_group g JOIN holder h ON h.id = g.holder_id WHERE g.id = :id AND h.kind = 'ENTREPRISE'""",
                 Db.p("id", id), "Flotte introuvable");
         List<Map<String, Object>> cards = db.list("""
@@ -101,17 +103,19 @@ public class FleetController {
         return g;
     }
 
-    public record FleetForm(String code, String contactName, String phone, String address, String note, Boolean active) {}
+    public record FleetForm(String code, String contactName, String phone, String address, String note, Boolean active,
+                            @Positive Long loadUpLimit, @jakarta.validation.constraints.DecimalMin("0") BigDecimal rechargeFeePct) {}
 
     @PutMapping("/api/fleets/{id}")
     @PreAuthorize("hasAuthority('FLOTTES')")
-    public Map<String, Object> update(@PathVariable long id, @RequestBody FleetForm f) {
+    public Map<String, Object> update(@PathVariable long id, @Valid @RequestBody FleetForm f) {
         fleets.fleet(id);
         db.update("""
-                \sUPDATE card_group SET code = :c, contact_name = :cn, phone = :ph, address = :a, note = :n, active = COALESCE(:ac, active)
+                \sUPDATE card_group SET code = :c, contact_name = :cn, phone = :ph, address = :a, note = :n, active = COALESCE(:ac, active),
+                       load_up_limit = :lim, recharge_fee_pct = COALESCE(:fee, recharge_fee_pct)
                 WHERE id = :id""",
                 Db.p("id", id, "c", blank(f.code()), "cn", blank(f.contactName()), "ph", blank(f.phone()), "a", blank(f.address()),
-                        "n", blank(f.note()), "ac", f.active()));
+                        "n", blank(f.note()), "ac", f.active(), "lim", f.loadUpLimit(), "fee", f.rechargeFeePct()));
         journal.log("FLOTTE_MODIFIEE", Journal.MODIFICATIONS, "Flotte modifiée", (String) get(id).get("name"), null, null, null);
         return get(id);
     }
@@ -142,6 +146,16 @@ public class FleetController {
     @PreAuthorize("hasAuthority('FLOTTES')")
     public Map<String, Object> recharge(@PathVariable long id, @Valid @RequestBody RechargeForm f) {
         return fleets.recharge(id, f.amount(), f.paymentMethod(), blank(f.paymentRef()), blank(f.note()), Auth.user());
+    }
+
+    public record FleetTransferForm(@NotNull Long toGroupId, @Positive long amount, String note) {}
+
+    /** Transfert vers une autre flotte de la même entreprise. */
+    @PostMapping("/api/fleets/{id}/transfer")
+    @PreAuthorize("hasAuthority('FLOTTES')")
+    public Map<String, Object> transfer(@PathVariable long id, @Valid @RequestBody FleetTransferForm f) {
+        fleets.transfer(id, f.toGroupId(), f.amount(), blank(f.note()), Auth.user().id());
+        return get(id);
     }
 
     public record AllocationLine(@NotNull Long cardId, @Positive long amount) {}

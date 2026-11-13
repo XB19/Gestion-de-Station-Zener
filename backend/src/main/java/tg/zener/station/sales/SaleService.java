@@ -17,6 +17,7 @@ import tg.zener.station.common.ApiException;
 import tg.zener.station.common.Db;
 import tg.zener.station.common.LiveFeed;
 import tg.zener.station.journal.Journal;
+import tg.zener.station.loyalty.LoyaltyService;
 import tg.zener.station.stock.StockService;
 
 /**
@@ -39,10 +40,12 @@ public class SaleService {
     private final StockService stock;
     private final Journal journal;
     private final LiveFeed live;
+    private final LoyaltyService loyalty;
     private final ZoneId zone;
 
-    public SaleService(Db db, CardService cards, StockService stock, Journal journal, LiveFeed live,
+    public SaleService(Db db, CardService cards, StockService stock, Journal journal, LiveFeed live, LoyaltyService loyalty,
                        @Value("${app.timezone}") String zone) {
+        this.loyalty = loyalty;
         this.db = db;
         this.cards = cards;
         this.stock = stock;
@@ -102,9 +105,13 @@ public class SaleService {
             }
         }
 
-        List<Object[]> priced = new ArrayList<>(); // productId, code, category, quantity, unitPrice, amount, name
+        // productId, code, category, quantity, unitPrice, amount (net), name, remise, règle de remise
+        List<Object[]> priced = new ArrayList<>();
         List<CardService.Item> items = new ArrayList<>();
+        // remises (palier, flotte, profil) : achats payés par carte seulement
+        List<Map<String, Object>> rules = card == null ? List.of() : loyalty.rulesFor(card);
         long total = 0;
+        long discountTotal = 0;
         for (Line l : s.lines()) {
             if (l.quantity() == null || l.quantity().signum() <= 0) {
                 throw new ApiException("Quantité invalide");
@@ -117,31 +124,44 @@ public class SaleService {
                 unit += ((Number) p.get("depositAmount")).longValue(); // bouteille neuve : gaz + consigne
             }
             long amount = l.quantity().multiply(BigDecimal.valueOf(unit)).setScale(0, RoundingMode.HALF_UP).longValue();
+            LoyaltyService.Discount d = "CARTE".equals(p.get("category")) ? LoyaltyService.Discount.NONE
+                    : LoyaltyService.best(rules, productId, (String) p.get("category"));
+            long discount = d.on(amount);
+            amount -= discount;
+            discountTotal += discount;
             total += amount;
-            priced.add(new Object[] {productId, p.get("code"), p.get("category"), l.quantity(), unit, amount, p.get("name")});
-            items.add(new CardService.Item((String) p.get("code"), (String) p.get("category"), amount));
+            priced.add(new Object[] {productId, p.get("code"), p.get("category"), l.quantity(), unit, amount, p.get("name"), discount, d.ruleId()});
+            items.add(new CardService.Item((String) p.get("code"), (String) p.get("category"), amount, l.quantity()));
         }
 
         Instant at = s.at() == null ? Instant.now() : s.at();
         Long shift = s.employeeId() == null || s.stationId() == null ? null : openShift(s.employeeId(), s.stationId());
         long saleId = db.insert("""
                 \sINSERT INTO sale (uuid, at, kind, channel, station_id, pdv_id, pump_id, mode, employee_id, employee_shift_id,
-                                  payment_method, payment_ref, card_id, buyer_profile, total, synced_at, vehicle_id, driver_id)
+                                  payment_method, payment_ref, card_id, buyer_profile, total, synced_at, vehicle_id, driver_id,
+                                  discount_total)
                 VALUES (:uuid, :at, :k, :ch, :s, :pv, :pump, :mode, :e, :sh, :pm, :pr, :card, :prof, :t, :sync,
-                        (SELECT vehicle_id FROM card WHERE id = :card), (SELECT driver_id FROM card WHERE id = :card))""",
+                        (SELECT vehicle_id FROM card WHERE id = :card), (SELECT driver_id FROM card WHERE id = :card), :dt)""",
                 Db.p("uuid", s.uuid() == null ? UUID.randomUUID() : s.uuid(), "at", java.sql.Timestamp.from(at), "k", s.kind(),
                         "ch", s.channel(), "s", s.stationId(), "pv", s.pdvId(), "pump", s.pumpId(), "mode", mode, "e", s.employeeId(),
                         "sh", shift, "pm", s.paymentMethod(), "pr", s.paymentRef(), "card", card == null ? null : card.get("id"),
-                        "prof", profile, "t", total, "sync", s.synced() ? java.sql.Timestamp.from(Instant.now()) : null));
+                        "prof", profile, "t", total, "sync", s.synced() ? java.sql.Timestamp.from(Instant.now()) : null,
+                        "dt", discountTotal));
         for (Object[] p : priced) {
             db.update("""
-                    \sINSERT INTO sale_line (sale_id, product_id, quantity, unit_price, amount)
-                    VALUES (:s, :p, :q, :u, :a)""", Db.p("s", saleId, "p", p[0], "q", p[3], "u", p[4], "a", p[5]));
+                    \sINSERT INTO sale_line (sale_id, product_id, quantity, unit_price, amount, discount_amount, discount_rule_id)
+                    VALUES (:s, :p, :q, :u, :a, :d, :r)""", Db.p("s", saleId, "p", p[0], "q", p[3], "u", p[4], "a", p[5], "d", p[7], "r", p[8]));
         }
 
         if (card != null) {
             cards.charge(new CardService.Charge(null, ((Number) card.get("id")).longValue(), s.pin(), s.requirePin() || autonomous,
                     s.stationId(), mode, items, LocalDateTime.ofInstant(at, zone)), describe(priced), saleId);
+            // points de fidélité sur le montant net de chaque ligne
+            List<Object[]> lines = new ArrayList<>();
+            for (Object[] p : priced) {
+                lines.add(new Object[] {p[0], p[2], p[5]});
+            }
+            loyalty.earn(saleId, card, lines, s.employeeId());
         }
         updateStock(s, priced, saleId);
         if (s.pumpId() != null) {

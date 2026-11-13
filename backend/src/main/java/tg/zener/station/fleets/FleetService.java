@@ -44,7 +44,8 @@ public class FleetService {
     /** Flotte et son titulaire ; refus si ce n'est pas une flotte d'entreprise. */
     Map<String, Object> fleet(long groupId) {
         Map<String, Object> g = db.require("""
-                \sSELECT g.id, g.name, g.balance, g.active, g.holder_id, h.name AS holder_name, h.kind AS holder_kind
+                \sSELECT g.id, g.name, g.balance, g.active, g.holder_id, g.load_up_limit, g.recharge_fee_pct, h.name AS holder_name,
+                       h.kind AS holder_kind
                 FROM card_group g JOIN holder h ON h.id = g.holder_id WHERE g.id = :id""", Db.p("id", groupId), "Flotte introuvable");
         if (!"ENTREPRISE".equals(g.get("holderKind"))) {
             throw new ApiException("Ce groupe n'appartient pas à une entreprise");
@@ -69,6 +70,10 @@ public class FleetService {
         if (!Boolean.TRUE.equals(g.get("active"))) {
             throw ApiException.conflict("Cette flotte est désactivée");
         }
+        Long cap = g.get("loadUpLimit") == null ? null : num(g.get("loadUpLimit"));
+        if (cap != null && num(g.get("balance")) + amount > cap) {
+            throw ApiException.conflict("Plafond du compte flotte dépassé (" + fmt(cap) + " F ; solde actuel " + fmt(num(g.get("balance"))) + " F)");
+        }
         String ref = refs.fleetRecharge();
         boolean needsValidation = amount > validations.threshold();
         long id = db.insert("""
@@ -92,14 +97,22 @@ public class FleetService {
                 \sUPDATE fleet_recharge SET status = 'CREDITEE', credited_at = now() WHERE id = :id AND status = 'EN_VALIDATION'
                 RETURNING group_id, amount, ref, payment_method, payment_ref""", Db.p("id", rechargeId), "Recharge introuvable");
         long groupId = num(r.get("groupId"));
-        long amount = num(r.get("amount"));
+        long gross = num(r.get("amount"));
+        // frais de service de la flotte (service_fee de LTStation), prélevés sur la recharge
+        java.math.BigDecimal pct = db.value("SELECT recharge_fee_pct FROM card_group WHERE id = :g", Db.p("g", groupId),
+                java.math.BigDecimal.class);
+        long fee = pct == null ? 0 : pct.multiply(java.math.BigDecimal.valueOf(gross)).divide(java.math.BigDecimal.valueOf(100), 0,
+                java.math.RoundingMode.HALF_UP).longValue();
+        long amount = gross - fee;
+        db.update("UPDATE fleet_recharge SET fee = :f WHERE id = :id", Db.p("id", rechargeId, "f", fee));
         Long balance = db.value("UPDATE card_group SET balance = balance + :a WHERE id = :g RETURNING balance",
                 Db.p("g", groupId, "a", amount), Long.class);
         db.update("""
                 \sINSERT INTO fleet_movement (group_id, kind, amount, balance_after, fleet_recharge_id, employee_id, note)
                 VALUES (:g, 'RECHARGE', :a, :b, :r, :e, :n)""",
                 Db.p("g", groupId, "a", amount, "b", balance, "r", rechargeId, "e", actorId,
-                        "n", r.get("ref") + " · " + paymentLabel((String) r.get("paymentMethod"), (String) r.get("paymentRef"))));
+                        "n", r.get("ref") + " · " + paymentLabel((String) r.get("paymentMethod"), (String) r.get("paymentRef"))
+                                + (fee > 0 ? " · frais de service " + fmt(fee) + " F" : "")));
         Map<String, Object> g = fleet(groupId);
         journal.logAs(actorId, "RECHARGE_FLOTTE", Journal.RECHARGES, "Compte flotte rechargé", label(g) + " · " + r.get("ref"),
                 amount, null, null);
@@ -115,6 +128,34 @@ public class FleetService {
         } else {
             db.update("UPDATE fleet_recharge SET status = 'REFUSEE' WHERE id = :id AND status = 'EN_VALIDATION'", Db.p("id", d.targetId()));
         }
+    }
+
+    /** Transfert entre deux flottes de la même entreprise (compte à compte). */
+    @Transactional
+    public void transfer(long fromGroup, long toGroup, long amount, String note, long employeeId) {
+        if (fromGroup == toGroup || amount <= 0) {
+            throw new ApiException("Choisissez une autre flotte et un montant positif");
+        }
+        Map<String, Object> from = fleet(fromGroup);
+        Map<String, Object> to = fleet(toGroup);
+        if (!from.get("holderId").equals(to.get("holderId"))) {
+            throw new ApiException("Les deux flottes doivent appartenir à la même entreprise");
+        }
+        Long fromBalance = db.value("UPDATE card_group SET balance = balance - :a WHERE id = :g AND balance >= :a RETURNING balance",
+                Db.p("g", fromGroup, "a", amount), Long.class);
+        if (fromBalance == null) {
+            throw ApiException.conflict("Solde du compte flotte insuffisant (" + fmt(num(from.get("balance"))) + " F)");
+        }
+        long toBalance = db.value("UPDATE card_group SET balance = balance + :a WHERE id = :g RETURNING balance",
+                Db.p("g", toGroup, "a", amount), Long.class);
+        db.update("""
+                \sINSERT INTO fleet_movement (group_id, kind, amount, balance_after, counterpart_group_id, employee_id, note) VALUES
+                    (:f, 'TRANSFERT', :neg, :fb, :t, :e, :nf), (:t, 'TRANSFERT', :a, :tb, :f, :e, :nt)""",
+                Db.p("f", fromGroup, "t", toGroup, "neg", -amount, "a", amount, "fb", fromBalance, "tb", toBalance, "e", employeeId,
+                        "nf", "Vers " + to.get("name") + (note == null ? "" : " · " + note),
+                        "nt", "De " + from.get("name") + (note == null ? "" : " · " + note)));
+        journal.logAs(employeeId, "TRANSFERT_FLOTTE", Journal.RECHARGES, "Transfert entre flottes",
+                from.get("holderName") + " · " + from.get("name") + " → " + to.get("name"), amount, null, null);
     }
 
     // ------------------------------------------------------------------ dotation et reprise

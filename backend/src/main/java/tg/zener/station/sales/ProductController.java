@@ -32,10 +32,32 @@ public class ProductController {
 
     private final Db db;
     private final Journal journal;
+    private final PriceService prices;
 
-    public ProductController(Db db, Journal journal) {
+    public ProductController(Db db, Journal journal, PriceService prices) {
         this.db = db;
         this.journal = journal;
+        this.prices = prices;
+    }
+
+    /** Historique des prix (changements appliqués, planifiés, annulés). */
+    @GetMapping("/api/prices/history")
+    public List<Map<String, Object>> history(@RequestParam(required = false) String productCode, @RequestParam(required = false) String status) {
+        return db.list("""
+                \sSELECT pc.id, p.code AS product_code, p.name AS product_name, p.category, pc.profile, pc.old_price, pc.new_price,
+                       pc.new_price - pc.old_price AS change, pc.effective_at, pc.status, pc.created_at, pc.applied_at, pc.note,
+                       e.first_name || ' ' || e.last_name AS created_by_name
+                FROM price_change pc JOIN product p ON p.id = pc.product_id LEFT JOIN employee e ON e.id = pc.created_by
+                WHERE (CAST(:p AS text) IS NULL OR p.code = :p) AND (CAST(:s AS text) IS NULL OR pc.status = :s)
+                ORDER BY pc.status = 'PLANIFIE' DESC, pc.effective_at DESC, pc.id DESC LIMIT 300""",
+                Db.p("p", productCode, "s", status));
+    }
+
+    @PostMapping("/api/prices/changes/{id}/cancel")
+    @PreAuthorize("hasAuthority('PRIX')")
+    public Map<String, Object> cancelChange(@PathVariable long id) {
+        prices.cancel(id, Auth.user().id());
+        return Map.of("ok", true);
     }
 
     @GetMapping("/api/products")
@@ -64,30 +86,20 @@ public class ProductController {
                               @NotBlank @Pattern(regexp = "GRAND_PUBLIC|EMPLOYE_STATION|EMPLOYE_GROUPE|PARTENAIRE") String profile,
                               @NotNull @Min(0) Long price) {}
 
-    public record PriceUpdate(@NotEmpty List<@Valid PriceChange> changes) {}
+    /** effectiveAt : date d'effet (nulle ou passée : immédiat ; future : changement planifié). */
+    public record PriceUpdate(@NotEmpty List<@Valid PriceChange> changes, java.time.Instant effectiveAt, String note) {}
 
     @PutMapping("/api/prices")
     @PreAuthorize("hasAuthority('PRIX')")
     @Transactional
     public List<Map<String, Object>> updatePrices(@Valid @RequestBody PriceUpdate u) {
         for (PriceChange c : u.changes()) {
-            Map<String, Object> p = db.require("SELECT id, name, card_type_code FROM product WHERE code = :c",
-                    Db.p("c", c.productCode()), "Produit inconnu : " + c.productCode());
-            Long before = db.value("SELECT price FROM product_price WHERE product_id = :p AND profile = :pr",
-                    Db.p("p", p.get("id"), "pr", c.profile()), Long.class);
-            db.update("""
-                    \sINSERT INTO product_price (product_id, profile, price, updated_at, updated_by) VALUES (:p, :pr, :v, now(), :u)
-                    ON CONFLICT (product_id, profile) DO UPDATE SET price = EXCLUDED.price, updated_at = now(),
-                        updated_by = EXCLUDED.updated_by""",
-                    Db.p("p", p.get("id"), "pr", c.profile(), "v", c.price(), "u", Auth.user().id()));
-            if (p.get("cardTypeCode") != null && "GRAND_PUBLIC".equals(c.profile())) {
-                db.update("UPDATE card_type SET price = :v WHERE code = :c", Db.p("v", c.price(), "c", p.get("cardTypeCode")));
+            Long productId = db.value("SELECT id FROM product WHERE code = :c", Db.p("c", c.productCode()), Long.class);
+            if (productId == null) {
+                throw ApiException.notFound("Produit inconnu : " + c.productCode());
             }
-            if (before == null || before.longValue() != c.price()) {
-                journal.log("PRIX", Journal.MODIFICATIONS, "Prix modifié",
-                        p.get("name") + " · " + label(c.profile()) + " · " + (before == null ? "—" : before) + " → " + c.price() + " F",
-                        null, null, null);
-            }
+            prices.set(productId, c.profile(), c.price(), u.effectiveAt(), u.note() == null || u.note().isBlank() ? null : u.note().trim(),
+                    Auth.user().id());
         }
         return prices(null);
     }
@@ -108,6 +120,10 @@ public class ProductController {
                         "d", f.depositAmount()));
         for (String profile : PROFILES) {
             db.update("INSERT INTO product_price (product_id, profile, price, updated_by) VALUES (:p, :pr, :v, :u)",
+                    Db.p("p", id, "pr", profile, "v", f.publicPrice(), "u", Auth.user().id()));
+            db.update("""
+                    \sINSERT INTO price_change (product_id, profile, new_price, effective_at, status, created_by, applied_at, note)
+                    VALUES (:p, :pr, :v, now(), 'APPLIQUE', :u, now(), 'Prix initial')""",
                     Db.p("p", id, "pr", profile, "v", f.publicPrice(), "u", Auth.user().id()));
         }
         journal.log("PRODUIT", Journal.MODIFICATIONS, "Produit créé", f.name(), null, null, null);

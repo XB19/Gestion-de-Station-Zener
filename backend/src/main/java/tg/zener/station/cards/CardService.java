@@ -1,5 +1,6 @@
 package tg.zener.station.cards;
 
+import java.math.BigDecimal;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -21,8 +22,13 @@ import tg.zener.station.common.Db;
 @Service
 public class CardService {
 
-    /** Article payé par carte : code produit (SUPER, GASOIL…), catégorie et montant. */
-    public record Item(String productCode, String category, long amount) {}
+    /** Article payé par carte : code produit (SUPER, GASOIL…), catégorie, montant et quantité (litres pour le carburant). */
+    public record Item(String productCode, String category, long amount, BigDecimal quantity) {
+
+        public Item(String productCode, String category, long amount) {
+            this(productCode, category, amount, null);
+        }
+    }
 
     /** Paiement : carte (numéro ou identifiant), PIN, lieu, mode et moment. */
     public record Charge(String number, Long cardId, String pin, boolean requirePin, Long stationId, String mode,
@@ -107,9 +113,14 @@ public class CardService {
 
     static final String CARD_SELECT = """
             \sSELECT c.id, c.number, c.type_code, c.techno, c.status, c.balance, c.pin_hash, c.expires_on, c.holder_id,
-                   h.kind AS holder_kind, h.name AS holder_name, h.profile AS holder_profile,
+                   c.group_id, c.credit_limit, h.kind AS holder_kind, h.name AS holder_name, h.profile AS holder_profile,
                    cp.products, cp.daily_limit, cp.monthly_limit, cp.per_tx_limit, cp.days, cp.time_from, cp.time_to,
-                   cp.station_ids, cp.autonomous_allowed
+                   cp.station_ids, cp.autonomous_allowed, cp.daily_volume_limit, cp.monthly_volume_limit, cp.daily_fills_limit,
+                   cp.min_balance,
+                   EXISTS (SELECT 1 FROM card_list l WHERE l.card_id = c.id AND l.kind = 'NOIRE' AND l.removed_at IS NULL
+                           AND (l.valid_until IS NULL OR l.valid_until > now())) AS blacklisted,
+                   EXISTS (SELECT 1 FROM card_list l WHERE l.card_id = c.id AND l.kind = 'GRISE' AND l.removed_at IS NULL
+                           AND (l.valid_until IS NULL OR l.valid_until > now())) AS graylisted
             FROM card c LEFT JOIN holder h ON h.id = c.holder_id LEFT JOIN card_permission cp ON cp.card_id = c.id""";
 
     /** Montants déjà dépensés par la carte aujourd'hui et ce mois-ci. */
@@ -145,10 +156,10 @@ public class CardService {
         long id = ((Number) card.get("id")).longValue();
         long total = ch.total();
         Long balance = db.value("""
-                \sUPDATE card SET balance = balance - :t WHERE id = :id AND balance >= :t RETURNING balance""",
-                Db.p("id", id, "t", total), Long.class);
+                \sUPDATE card SET balance = balance - :t WHERE id = :id AND balance - :t >= :floor RETURNING balance""",
+                Db.p("id", id, "t", total, "floor", floor(card)), Long.class);
         if (balance == null) {
-            refuse(card, ch, "SOLDE_INSUFFISANT", "Solde insuffisant");
+            refuse(card, ch, "SOLDE_INSUFFISANT", credit(card) ? "Plafond de crédit atteint" : "Solde insuffisant");
         }
         db.update("""
                 \sINSERT INTO card_movement (card_id, kind, amount, balance_after, station_id, sale_id, detail, employee_id)
@@ -158,7 +169,30 @@ public class CardService {
         return card;
     }
 
+    /** Carte de crédit : le solde peut devenir négatif jusqu'au plafond de crédit. */
+    static boolean credit(Map<String, Object> card) {
+        Long limit = num(card.get("creditLimit"));
+        return limit != null && limit > 0;
+    }
+
+    /** Solde le plus bas autorisé après un paiement. */
+    static long floor(Map<String, Object> card) {
+        if (credit(card)) {
+            return -num(card.get("creditLimit"));
+        }
+        Long min = num(card.get("minBalance"));
+        return min == null ? 0 : min;
+    }
+
+    /** Montant disponible : solde jusqu'au plancher. */
+    static long available(Map<String, Object> card) {
+        return num(card.get("balance")) - floor(card);
+    }
+
     private void check(Map<String, Object> card, Charge ch, boolean withAmount) {
+        if (Boolean.TRUE.equals(card.get("blacklisted"))) {
+            refuse(card, ch, "CARTE_OPPOSITION", "Carte en opposition (liste noire)");
+        }
         String status = (String) card.get("status");
         if (!"ACTIVE".equals(status)) {
             refuse(card, ch, "CARTE_INACTIVE", switch (status) {
@@ -170,7 +204,8 @@ public class CardService {
         if (card.get("expiresOn") != null && ((LocalDate) card.get("expiresOn")).isBefore(LocalDate.now())) {
             refuse(card, ch, "CARTE_EXPIREE", "Carte expirée");
         }
-        if (ch.requirePin() || ch.pin() != null) {
+        // carte sous surveillance (liste grise) : code PIN exigé à chaque paiement
+        if (ch.requirePin() || ch.pin() != null || Boolean.TRUE.equals(card.get("graylisted"))) {
             String hash = (String) card.get("pinHash");
             if (hash == null) {
                 refuse(card, ch, "PIN_NON_DEFINI", "Code PIN non défini");
@@ -231,14 +266,48 @@ public class CardService {
         if (monthly != null && num(u.get("spentMonth")) + total > monthly) {
             refuse(card, ch, "PLAFOND_MENSUEL", "Plafond mensuel atteint");
         }
-        if (num(card.get("balance")) < total) {
-            refuse(card, ch, "SOLDE_INSUFFISANT", "Solde insuffisant");
+        checkVolume(card, ch);
+        if (available(card) < total) {
+            refuse(card, ch, "SOLDE_INSUFFISANT", credit(card) ? "Plafond de crédit atteint" : "Solde insuffisant");
+        }
+    }
+
+    /** Plafonds en litres (jour, mois) et nombre de pleins par jour, pour le carburant. */
+    private void checkVolume(Map<String, Object> card, Charge ch) {
+        Object dayVol = card.get("dailyVolumeLimit");
+        Object monthVol = card.get("monthlyVolumeLimit");
+        Object fills = card.get("dailyFillsLimit");
+        if (dayVol == null && monthVol == null && fills == null) {
+            return;
+        }
+        BigDecimal liters = ch.items().stream().filter(i -> "CARBURANT".equals(i.category()) && i.quantity() != null)
+                .map(Item::quantity).reduce(BigDecimal.ZERO, BigDecimal::add);
+        if (liters.signum() == 0) {
+            return;
+        }
+        Map<String, Object> u = db.one("""
+                \sSELECT COALESCE(sum(l.quantity) FILTER (WHERE x.at >= current_date), 0) AS liters_today,
+                       COALESCE(sum(l.quantity), 0) AS liters_month,
+                       count(DISTINCT x.id) FILTER (WHERE x.at >= current_date) AS fills_today
+                FROM sale x JOIN sale_line l ON l.sale_id = x.id JOIN product p ON p.id = l.product_id
+                WHERE x.card_id = :c AND p.category = 'CARBURANT' AND x.at >= date_trunc('month', now())""",
+                Db.p("c", card.get("id")));
+        if (fills != null && ((Number) u.get("fillsToday")).intValue() >= ((Number) fills).intValue()) {
+            refuse(card, ch, "PLAFOND_PLEINS", "Nombre de pleins du jour atteint (" + fills + ")");
+        }
+        if (dayVol != null && ((BigDecimal) u.get("litersToday")).add(liters).compareTo((BigDecimal) dayVol) > 0) {
+            refuse(card, ch, "PLAFOND_VOLUME_JOUR", "Plafond journalier de " + ((BigDecimal) dayVol).stripTrailingZeros().toPlainString()
+                    + " L atteint");
+        }
+        if (monthVol != null && ((BigDecimal) u.get("litersMonth")).add(liters).compareTo((BigDecimal) monthVol) > 0) {
+            refuse(card, ch, "PLAFOND_VOLUME_MOIS", "Plafond mensuel de " + ((BigDecimal) monthVol).stripTrailingZeros().toPlainString()
+                    + " L atteint");
         }
     }
 
     private long maxAmount(Map<String, Object> card) {
         List<Long> limits = new ArrayList<>();
-        limits.add(num(card.get("balance")));
+        limits.add(available(card));
         Map<String, Object> u = usage(((Number) card.get("id")).longValue());
         if (card.get("perTxLimit") != null) {
             limits.add(num(card.get("perTxLimit")));

@@ -167,8 +167,8 @@ public class CardController {
         }
         decorate(c);
         c.putAll(db.one("""
-                \sSELECT c.vehicle_plate, c.driver_name, c.blocked_reason, c.activated_at, c.sold_at,
-                       (c.pin_hash IS NOT NULL) AS has_pin,
+                \sSELECT c.vehicle_plate, c.driver_name, c.blocked_reason, c.activated_at, c.sold_at, c.credit_limit,
+                       (c.pin_hash IS NOT NULL) AS has_pin, h.loyalty_points, c.vehicle_id, c.driver_id,
                        h.id_doc_type, h.id_doc_number, h.phone AS holder_phone, h.email AS holder_email, h.profile AS holder_profile,
                        ie.first_name || ' ' || ie.last_name AS issued_by_name,
                        ae.first_name || ' ' || ae.last_name AS activated_by_name,
@@ -181,8 +181,19 @@ public class CardController {
                 WHERE c.id = :id""", Db.p("id", id)));
         Map<String, Object> perm = db.one("""
                 \sSELECT products, daily_limit, monthly_limit, per_tx_limit, days, time_from, time_to, station_ids,
-                       autonomous_allowed, updated_at FROM card_permission WHERE card_id = :id""", Db.p("id", id));
+                       autonomous_allowed, daily_volume_limit, monthly_volume_limit, daily_fills_limit, min_balance, updated_at
+                FROM card_permission WHERE card_id = :id""", Db.p("id", id));
         c.put("permissions", perm);
+        // listes en cours (noire, grise, blanche) et remplacements
+        c.put("lists", db.list("""
+                \sSELECT l.id, l.kind, l.reason, l.added_at, l.valid_until, s.short_name AS station_name
+                FROM card_list l LEFT JOIN station s ON s.id = l.station_id
+                WHERE l.card_id = :id AND l.removed_at IS NULL AND (l.valid_until IS NULL OR l.valid_until > now())
+                ORDER BY l.added_at""", Db.p("id", id)));
+        c.put("replacement", db.one("""
+                \sSELECT r.reason, r.at, r.new_card_id, n.number AS new_number, r.old_card_id, o.number AS old_number
+                FROM card_replacement r JOIN card n ON n.id = r.new_card_id JOIN card o ON o.id = r.old_card_id
+                WHERE r.old_card_id = :id OR r.new_card_id = :id ORDER BY r.at DESC LIMIT 1""", Db.p("id", id)));
         Map<String, Object> usage = cards.usage(id);
         c.put("usage", usage);
         long threshold = settings.getLong("validation.threshold", 500_000);
@@ -325,7 +336,10 @@ public class CardController {
     public record PermissionForm(List<@Pattern(regexp = "SUPER|GASOIL|PETROLE|LUBRIFIANT|GAZ|ACCESSOIRE") String> products,
                                  @Min(0) Long dailyLimit, @Min(0) Long monthlyLimit, @Min(0) Long perTxLimit,
                                  List<@Min(1) @Max(7) Integer> days, LocalTime timeFrom, LocalTime timeTo,
-                                 List<Long> stationIds, Boolean autonomousAllowed) {}
+                                 List<Long> stationIds, Boolean autonomousAllowed,
+                                 @jakarta.validation.constraints.Positive java.math.BigDecimal dailyVolumeLimit,
+                                 @jakarta.validation.constraints.Positive java.math.BigDecimal monthlyVolumeLimit,
+                                 @Min(1) Integer dailyFillsLimit, @Min(0) Long minBalance) {}
 
     /** Permissions appliquées par toutes les stations, y compris en mode autonome. */
     @PutMapping("/{id}/permissions")
@@ -345,16 +359,20 @@ public class CardController {
                 : f.products();
         db.update("""
                 \sINSERT INTO card_permission (card_id, products, daily_limit, monthly_limit, per_tx_limit, days, time_from, time_to,
-                                             station_ids, autonomous_allowed, updated_at, updated_by)
-                VALUES (:id, :pr, :dl, :ml, :tl, :d, :tf, :tt, :st, COALESCE(:au, true), now(), :u)
+                                             station_ids, autonomous_allowed, updated_at, updated_by, daily_volume_limit,
+                                             monthly_volume_limit, daily_fills_limit, min_balance)
+                VALUES (:id, :pr, :dl, :ml, :tl, :d, :tf, :tt, :st, COALESCE(:au, true), now(), :u, :dv, :mv, :df, :mb)
                 ON CONFLICT (card_id) DO UPDATE SET products = EXCLUDED.products, daily_limit = EXCLUDED.daily_limit,
                     monthly_limit = EXCLUDED.monthly_limit, per_tx_limit = EXCLUDED.per_tx_limit, days = EXCLUDED.days,
                     time_from = EXCLUDED.time_from, time_to = EXCLUDED.time_to, station_ids = EXCLUDED.station_ids,
-                    autonomous_allowed = EXCLUDED.autonomous_allowed, updated_at = now(), updated_by = EXCLUDED.updated_by""",
+                    autonomous_allowed = EXCLUDED.autonomous_allowed, updated_at = now(), updated_by = EXCLUDED.updated_by,
+                    daily_volume_limit = EXCLUDED.daily_volume_limit, monthly_volume_limit = EXCLUDED.monthly_volume_limit,
+                    daily_fills_limit = EXCLUDED.daily_fills_limit, min_balance = EXCLUDED.min_balance""",
                 Db.p("id", id, "pr", db.array("text", products.toArray()), "dl", f.dailyLimit(), "ml", f.monthlyLimit(),
                         "tl", f.perTxLimit(), "d", db.array("smallint", days.toArray()), "tf", f.timeFrom(), "tt", f.timeTo(),
                         "st", f.stationIds() == null ? null : db.array("bigint", f.stationIds().toArray()),
-                        "au", f.autonomousAllowed(), "u", Auth.user().id()));
+                        "au", f.autonomousAllowed(), "u", Auth.user().id(), "dv", f.dailyVolumeLimit(), "mv", f.monthlyVolumeLimit(),
+                        "df", f.dailyFillsLimit(), "mb", f.minBalance()));
         String change = changes(before, f);
         events.record(id, CardEvents.PERMISSIONS, change.isEmpty() ? null : change.substring(3), Auth.user().stationId(), null);
         journal.log("PERMISSIONS", Journal.MODIFICATIONS, "Permissions modifiées",
