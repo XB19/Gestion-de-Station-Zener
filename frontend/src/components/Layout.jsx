@@ -3,6 +3,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import {
   LayoutGrid, Fuel, Store, CreditCard, Wallet, ShieldCheck, ShoppingCart, Users, Building2,
   FileBarChart, ScrollText, Settings, LogOut, Search, Bell, ChevronDown, Globe, TriangleAlert, Truck, Timer, Database, CarFront,
+  Gift, Landmark, ShieldAlert, PackagePlus,
 } from 'lucide-react';
 import ZenerLogo from './ZenerLogo.jsx';
 import { Avatar, IcoBox } from './ui.jsx';
@@ -29,6 +30,9 @@ const NAV = [
       { to: '/cartes', label: 'Cartes', icon: CreditCard, rights: ['CARTES_GERER', 'CARTES_ACTIVER', 'RECHARGER', 'CARTES_EMPLOYES'] },
       { to: '/rechargements', label: 'Rechargements', icon: Wallet, rights: ['RECHARGER', 'TRANSACTIONS'] },
       { to: '/flottes', label: 'Flottes', icon: CarFront, rights: ['FLOTTES', 'VALIDER_MONTANTS'] },
+      { to: '/fidelite', label: 'Fidélité', icon: Gift, rights: ['FIDELITE', 'TRANSACTIONS'] },
+      { to: '/credit', label: 'Clients à crédit', icon: Landmark, rights: ['CREDIT'] },
+      { to: '/listes-cartes', label: 'Listes de cartes', icon: ShieldAlert, rights: ['CARTES_GERER', 'CARTES_ACTIVER', 'TRANSACTIONS'] },
       { to: '/validations', label: 'Validations', icon: ShieldCheck, badge: true,
         rights: ['VALIDER_MONTANTS', 'PDV_VALIDER', 'RECHARGER', 'TRANSACTIONS'] },
     ],
@@ -39,6 +43,7 @@ const NAV = [
       { to: '/mon-poste', label: 'Mon poste', icon: Timer, rights: ['VENTES_POMPE'] },
       { to: '/ventes-stocks', label: 'Ventes & stocks', icon: ShoppingCart,
         rights: ['STOCKS', 'VENTES_BOUTIQUE', 'TRANSACTIONS', 'PRIX', 'VENTES_POMPE'] },
+      { to: '/approvisionnement', label: 'Approvisionnement', icon: PackagePlus, rights: ['APPROVISIONNEMENT', 'STOCKS', 'PRIX'] },
     ],
   },
   {

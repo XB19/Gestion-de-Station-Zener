@@ -22,6 +22,10 @@ import MonPoste from './pages/MonPoste.jsx';
 import Parametres from './pages/Parametres.jsx';
 import Extractions from './pages/Extractions.jsx';
 import Flottes from './pages/Flottes.jsx';
+import Fidelite from './pages/Fidelite.jsx';
+import Credit from './pages/Credit.jsx';
+import ListesCartes from './pages/ListesCartes.jsx';
+import Approvisionnement from './pages/Approvisionnement.jsx';
 
 // HashRouter : fonctionne aussi en file:// dans Electron
 export default function App() {
@@ -51,6 +55,10 @@ export default function App() {
           <Route path="/parametres" element={<Parametres />} />
           <Route path="/extractions" element={<Extractions />} />
           <Route path="/flottes" element={<Flottes />} />
+          <Route path="/fidelite" element={<Fidelite />} />
+          <Route path="/credit" element={<Credit />} />
+          <Route path="/listes-cartes" element={<ListesCartes />} />
+          <Route path="/approvisionnement" element={<Approvisionnement />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

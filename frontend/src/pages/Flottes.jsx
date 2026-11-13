@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  CarFront, Wallet, HandCoins, Undo2, Link as LinkIcon, Pencil, Plus, Users, Fuel, Search, Building2, Gauge, IdCard,
+  CarFront, Wallet, HandCoins, Undo2, Link as LinkIcon, Pencil, Plus, Users, Fuel, Search, Building2, Gauge, IdCard, ArrowLeftRight,
 } from 'lucide-react';
 import { PageHeader, Card, Kpi, Badge, Button, Segmented, Async, Empty, Pager } from '../components/ui.jsx';
 import { FormModal, Field, TextInput, SelectInput, useToast } from '../components/feedback.jsx';
@@ -14,7 +14,8 @@ const TABS = ['Cartes', 'Véhicules', 'Chauffeurs', 'Compte flotte'];
 const PAYMENTS = [{ value: 'VIREMENT', label: 'Virement' }, { value: 'ESPECES', label: 'Espèces' },
   { value: 'MOBILE_MONEY', label: 'Mobile money' }, { value: 'CARTE_BANCAIRE', label: 'Carte bancaire' }];
 const STATUS_TONES = { ACTIVE: 'green', A_ACTIVER: 'orange', BLOQUEE: 'red', INACTIVE: 'gray' };
-const MOVE_LABELS = { RECHARGE: 'Recharge du compte', DOTATION: 'Dotation', REPRISE: 'Reprise', AJUSTEMENT: 'Ajustement' };
+const MOVE_LABELS = { RECHARGE: 'Recharge du compte', DOTATION: 'Dotation', REPRISE: 'Reprise', AJUSTEMENT: 'Ajustement', TRANSFERT: 'Transfert' };
+const sistersOf = (f) => (typeof f.sisterFleets === 'string' ? JSON.parse(f.sisterFleets) : f.sisterFleets) || [];
 
 const n = (v) => (v === '' || v == null ? null : Number(v));
 
@@ -25,6 +26,7 @@ function RechargeModal({ fleet, threshold, onClose, onSaved }) {
   const [f, setF] = useState({ amount: '', paymentMethod: 'VIREMENT', paymentRef: '', note: '' });
   const set = (k) => (v) => setF((x) => ({ ...x, [k]: v }));
   const above = Number(f.amount) > threshold;
+  const fee = Math.round((Number(f.amount) || 0) * Number(fleet.rechargeFeePct || 0) / 100);
   return (
     <FormModal title={`Recharger le compte · ${fleet.holderName} · ${fleet.name}`} submitLabel="Recharger" onClose={onClose}
       onSubmit={async () => {
@@ -41,6 +43,38 @@ function RechargeModal({ fleet, threshold, onClose, onSaved }) {
         <Field label="Paiement"><SelectInput value={f.paymentMethod} onChange={set('paymentMethod')} options={PAYMENTS} /></Field>
         <Field label="Référence du paiement"><TextInput value={f.paymentRef} onChange={set('paymentRef')} placeholder="N° de virement…" /></Field>
         <Field label="Note"><TextInput value={f.note} onChange={set('note')} /></Field>
+      </div>
+      {(fleet.rechargeFeePct > 0 || fleet.loadUpLimit) && (
+        <div className="muted" style={{ marginTop: 12, fontSize: 13 }}>
+          {fleet.rechargeFeePct > 0 && <>Frais de {Number(fleet.rechargeFeePct)} % : {fcfa(fee)} F · crédité {fcfa((Number(f.amount) || 0) - fee)} F. </>}
+          {fleet.loadUpLimit && <>Compte limité à {fcfa(fleet.loadUpLimit)} F (solde actuel {fcfa(fleet.balance)} F).</>}
+        </div>
+      )}
+    </FormModal>
+  );
+}
+
+/** Transfert du compte flotte vers une autre flotte de la même entreprise. */
+function FleetTransferModal({ fleet, onClose, onSaved }) {
+  const notify = useToast();
+  const sisters = sistersOf(fleet);
+  const [f, setF] = useState({ toGroupId: String(sisters[0]?.id || ''), amount: '', note: '' });
+  const set = (k) => (v) => setF((x) => ({ ...x, [k]: v }));
+  return (
+    <FormModal title={`Transférer depuis ${fleet.name}`} submitLabel="Transférer" onClose={onClose}
+      onSubmit={async () => {
+        await post(`/fleets/${fleet.id}/transfer`, { toGroupId: Number(f.toGroupId), amount: Number(f.amount), note: f.note || null });
+        notify(`${money(Number(f.amount))} transférés vers ${sisters.find((x) => String(x.id) === f.toGroupId)?.name}`);
+        onSaved();
+      }}>
+      <div className="form-grid">
+        <Field label="Vers la flotte">
+          <SelectInput value={f.toGroupId} onChange={set('toGroupId')} options={sisters.map((x) => ({ value: String(x.id), label: x.name }))} />
+        </Field>
+        <Field label="Montant (F)" hint={`Compte flotte : ${money(fleet.balance)}`}>
+          <TextInput type="number" min="1" max={fleet.balance} value={f.amount} onChange={set('amount')} required />
+        </Field>
+        <Field label="Note" full><TextInput value={f.note} onChange={set('note')} /></Field>
       </div>
     </FormModal>
   );
@@ -247,17 +281,28 @@ function AssignDriverModal({ vehicle, drivers, onClose, onSaved }) {
 function FleetModal({ fleet, onClose, onSaved }) {
   const notify = useToast();
   const [f, setF] = useState({ code: fleet.code || '', contactName: fleet.contactName || '', phone: fleet.phone || '',
-    address: fleet.address || '', note: fleet.note || '', active: fleet.active });
+    address: fleet.address || '', note: fleet.note || '', active: fleet.active, loadUpLimit: fleet.loadUpLimit ?? '',
+    rechargeFeePct: fleet.rechargeFeePct ?? 0 });
   const set = (k) => (v) => setF((x) => ({ ...x, [k]: v }));
   return (
     <FormModal title={`Flotte · ${fleet.holderName} · ${fleet.name}`} onClose={onClose}
-      onSubmit={async () => { await put(`/fleets/${fleet.id}`, f); notify('Flotte modifiée'); onSaved(); }}>
+      onSubmit={async () => {
+        await put(`/fleets/${fleet.id}`, { ...f, loadUpLimit: n(f.loadUpLimit), rechargeFeePct: n(f.rechargeFeePct) ?? 0 });
+        notify('Flotte modifiée');
+        onSaved();
+      }}>
       <div className="form-grid">
         <Field label="Code"><TextInput value={f.code} onChange={set('code')} /></Field>
         <Field label="État"><SelectInput value={f.active ? 'oui' : 'non'} onChange={(v) => set('active')(v === 'oui')}
           options={[{ value: 'oui', label: 'Active' }, { value: 'non', label: 'Désactivée' }]} /></Field>
         <Field label="Contact"><TextInput value={f.contactName} onChange={set('contactName')} /></Field>
         <Field label="Téléphone"><TextInput value={f.phone} onChange={set('phone')} /></Field>
+        <Field label="Plafond du compte (F)" hint="Solde maximal du compte flotte · vide : sans plafond">
+          <TextInput type="number" min="1" step="1000" value={f.loadUpLimit} onChange={set('loadUpLimit')} />
+        </Field>
+        <Field label="Frais de recharge (%)" hint="Retenus sur chaque recharge du compte">
+          <TextInput type="number" min="0" max="100" step="0.1" value={f.rechargeFeePct} onChange={set('rechargeFeePct')} />
+        </Field>
         <Field label="Adresse" full><TextInput value={f.address} onChange={set('address')} /></Field>
         <Field label="Note" full><TextInput value={f.note} onChange={set('note')} /></Field>
       </div>
@@ -474,11 +519,19 @@ export default function Flottes() {
                           {!f.active && <Badge tone="red">Désactivée</Badge>}
                         </div>
                         <div className="card-sub">{[f.contactName, f.phone, f.address].filter(Boolean).join(' · ') || 'Aucun contact renseigné'}</div>
+                        {(f.loadUpLimit || f.rechargeFeePct > 0) && (
+                          <div className="muted" style={{ fontSize: 12.5, marginTop: 3 }}>
+                            {[f.loadUpLimit && `Compte plafonné à ${fcfa(f.loadUpLimit)} F`, f.rechargeFeePct > 0 && `frais de recharge ${Number(f.rechargeFeePct)} %`].filter(Boolean).join(' · ')}
+                          </div>
+                        )}
                       </div>
                       {edit && (
                         <span className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
                           <Button size="sm" icon={Pencil} onClick={() => setModal({ type: 'fleet' })}>Modifier</Button>
                           <Button size="sm" icon={HandCoins} onClick={() => setModal({ type: 'allocate' })} disabled={!f.balance || !f.active}>Doter les cartes</Button>
+                          {sistersOf(f).length > 0 && (
+                            <Button size="sm" icon={ArrowLeftRight} onClick={() => setModal({ type: 'transfer' })} disabled={!f.balance || !f.active}>Transférer</Button>
+                          )}
                           <Button size="sm" variant="primary" icon={Wallet} onClick={() => setModal({ type: 'recharge' })} disabled={!f.active}>Recharger le compte</Button>
                         </span>
                       )}
@@ -516,6 +569,7 @@ export default function Flottes() {
                   {modal?.type === 'driver' && <DriverModal fleet={f} driver={modal.driver} onClose={() => setModal(null)} onSaved={done} />}
                   {modal?.type === 'driverOf' && <AssignDriverModal vehicle={modal.vehicle} drivers={f.drivers} onClose={() => setModal(null)} onSaved={done} />}
                   {modal?.type === 'fleet' && <FleetModal fleet={f} onClose={() => setModal(null)} onSaved={done} />}
+                  {modal?.type === 'transfer' && <FleetTransferModal fleet={f} onClose={() => setModal(null)} onSaved={done} />}
                 </>
               )}
             </Async>

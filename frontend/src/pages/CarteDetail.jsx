@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   ChevronRight, Lock, LockOpen, Pencil, Wallet, Fuel, Droplet, Flame, Clock, Package, KeyRound, ShieldCheck, Save,
+  ArrowLeftRight, RefreshCw, Gift, Landmark, ShieldAlert, X,
 } from 'lucide-react';
 import {
   PageHeader, Card, Badge, StatusBadge, Button, Checkbox, Toggle, KV, BankCard, Progress, Async, Empty, Pager,
@@ -10,6 +11,7 @@ import { FormModal, Field, TextInput, SelectInput, useToast } from '../component
 import { useApi, useLiveReload } from '../api/hooks.js';
 import { post, put } from '../api/client.js';
 import { useSession } from '../api/session.jsx';
+import CardPicker from '../components/CardPicker.jsx';
 import { dateTime, fcfa, hhmm, longDate, masked, money, signed } from '../lib/format.js';
 
 const PRODUCTS = [
@@ -23,6 +25,9 @@ const PRODUCTS = [
 const DAYS = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
 const TECHNO = { PUCE: 'Carte à puce', M1: 'Carte M1' };
 const TYPE_TONE = { FLOTTE: 'blue', VIP: 'purple', CLASSIQUE: 'gray', EMPLOYE: 'green' };
+const LIST_TONE = { NOIRE: 'red', GRISE: 'orange', BLANCHE: 'green' };
+const LIST_LABEL = { NOIRE: 'Liste noire', GRISE: 'Liste grise', BLANCHE: 'Liste blanche' };
+const REPLACE_REASON = { PERTE: 'Perte', VOL: 'Vol', DETERIORATION: 'Carte abîmée', AUTRE: 'Autre motif' };
 const expiry = (d) => (d ? `${String(d).slice(5, 7)}/${String(d).slice(2, 4)}` : '—');
 
 function operationLabel(o) {
@@ -33,7 +38,7 @@ function operationLabel(o) {
     return `Recharge ${c}`.trim();
   }
   if (o.kind === 'AJUSTEMENT') return `Ajustement · ${o.detail || ''}`;
-  if (o.kind === 'DOTATION' || o.kind === 'REPRISE') return o.detail;
+  if (['DOTATION', 'REPRISE', 'TRANSFERT', 'FIDELITE', 'REGLEMENT', 'FRAIS'].includes(o.kind)) return o.detail;
   return /^vente/i.test(o.detail || '') ? o.detail : `Vente ${o.detail || ''}`.trim();
 }
 
@@ -107,6 +112,206 @@ function PinModal({ card, onClose }) {
   );
 }
 
+function TransferModal({ card, onClose, onSaved }) {
+  const notify = useToast();
+  const [to, setTo] = useState(null);
+  const [amount, setAmount] = useState('');
+  const [note, setNote] = useState('');
+  return (
+    <FormModal title={`Transférer depuis la carte ${masked(card.number)}`} submitLabel="Transférer" onClose={onClose} onSubmit={async () => {
+      if (!to) throw new Error('Choisissez la carte qui reçoit le montant');
+      await post(`/cards/${card.id}/transfer`, { toCardId: to.id, amount: Number(amount), note: note || null });
+      notify(`${fcfa(amount)} F transférés vers ${masked(to.number)}`);
+      onSaved();
+    }}>
+      <Field label="Carte qui reçoit" hint="Une autre carte du même titulaire (ou de la même entreprise)">
+        <CardPicker value={to} onChange={setTo} autoFocus />
+      </Field>
+      <div className="form-grid" style={{ marginTop: 12 }}>
+        <Field label="Montant (F)" hint={`Disponible : ${fcfa(card.balance)} F`}>
+          <TextInput type="number" min="1" max={card.balance} value={amount} onChange={setAmount} required />
+        </Field>
+        <Field label="Motif"><TextInput value={note} onChange={setNote} placeholder="Facultatif" /></Field>
+      </div>
+    </FormModal>
+  );
+}
+
+function ReplaceModal({ card, onClose, onDone }) {
+  const notify = useToast();
+  const [f, setF] = useState({ reason: 'PERTE', newNumber: '', note: '' });
+  const set = (k) => (v) => setF((x) => ({ ...x, [k]: v }));
+  return (
+    <FormModal title={`Remplacer la carte ${masked(card.number)}`} submitLabel="Émettre la nouvelle carte" onClose={onClose} onSubmit={async () => {
+      const r = await post(`/cards/${card.id}/replace`, { reason: f.reason, newNumber: f.newNumber || null, note: f.note || null });
+      notify(`Nouvelle carte ${masked(r.newNumber)} émise (à activer) · ${fcfa(r.balanceTransferred)} F reportés`);
+      onDone(r);
+    }}>
+      <div className="form-grid">
+        <Field label="Motif">
+          <SelectInput value={f.reason} onChange={set('reason')} options={Object.entries(REPLACE_REASON).map(([value, label]) => ({ value, label }))} />
+        </Field>
+        <Field label="Numéro de la nouvelle carte" hint="Vide : prochain numéro libre">
+          <TextInput value={f.newNumber} onChange={set('newNumber')} inputMode="numeric" />
+        </Field>
+        <Field label="Remarque" full><TextInput value={f.note} onChange={set('note')} /></Field>
+      </div>
+      <div className="muted" style={{ marginTop: 12, fontSize: 13, lineHeight: 1.5 }}>
+        La carte actuelle est bloquée (et mise en liste noire en cas de perte ou de vol). Le solde, les permissions, le véhicule,
+        le chauffeur et le PIN passent sur la nouvelle carte, moins les frais de remplacement. La nouvelle carte doit être activée par une autre personne.
+      </div>
+    </FormModal>
+  );
+}
+
+function RedeemModal({ card, info, onClose, onSaved }) {
+  const notify = useToast();
+  const [points, setPoints] = useState(String(card.loyaltyPoints || ''));
+  const value = info?.pointValue;
+  return (
+    <FormModal title="Utiliser les points de fidélité" submitLabel="Créditer la carte" onClose={onClose} onSubmit={async () => {
+      const r = await post('/loyalty/redeem', { cardId: card.id, points: Number(points) });
+      notify(`${points} points utilisés · ${fcfa(r.amount)} F crédités`);
+      onSaved();
+    }}>
+      <Field label="Points" hint={`${fcfa(card.loyaltyPoints)} points disponibles${info ? ` · minimum ${info.minRedeem}` : ''}`}>
+        <TextInput type="number" min="1" max={card.loyaltyPoints} value={points} onChange={setPoints} required autoFocus />
+      </Field>
+      {value != null && (
+        <div className="muted" style={{ marginTop: 12, fontSize: 13 }}>
+          1 point = {value} F · la carte sera créditée de <span className="strong">{fcfa(Number(points || 0) * value)} F</span>
+        </div>
+      )}
+    </FormModal>
+  );
+}
+
+function CreditModal({ card, onClose, onSaved }) {
+  const notify = useToast();
+  const [limit, setLimit] = useState(String(card.creditLimit || 0));
+  return (
+    <FormModal title="Plafond de crédit" onClose={onClose} onSubmit={async () => {
+      await put(`/cards/${card.id}/credit`, { creditLimit: Number(limit || 0) });
+      notify('Plafond de crédit enregistré');
+      onSaved();
+    }}>
+      <Field label="Plafond (F)" hint="La carte peut payer jusqu'à ce montant au-delà de son solde ; facture mensuelle au titulaire. 0 = carte prépayée">
+        <TextInput type="number" min="0" step="1000" value={limit} onChange={setLimit} required autoFocus />
+      </Field>
+    </FormModal>
+  );
+}
+
+function ListModal({ card, onClose, onSaved }) {
+  const notify = useToast();
+  const stations = useApi('/stations');
+  const [f, setF] = useState({ kind: 'GRISE', stationId: '', reason: '', validUntil: '' });
+  const set = (k) => (v) => setF((x) => ({ ...x, [k]: v }));
+  return (
+    <FormModal title={`Mettre la carte ${masked(card.number)} sur une liste`} onClose={onClose} onSubmit={async () => {
+      await post('/card-lists', {
+        cardId: card.id, kind: f.kind, stationId: f.kind === 'BLANCHE' && f.stationId ? Number(f.stationId) : null, reason: f.reason,
+        validUntil: f.validUntil ? new Date(`${f.validUntil}T23:59:59`).toISOString() : null,
+      });
+      notify(`Carte ajoutée à la ${LIST_LABEL[f.kind].toLowerCase()}`);
+      onSaved();
+    }}>
+      <div className="form-grid">
+        <Field label="Liste">
+          <SelectInput value={f.kind} onChange={set('kind')} options={[
+            { value: 'NOIRE', label: 'Noire · refusée partout, même hors connexion' },
+            { value: 'GRISE', label: 'Grise · sous surveillance, PIN exigé' },
+            { value: 'BLANCHE', label: 'Blanche · acceptée hors connexion' },
+          ]} />
+        </Field>
+        <Field label="Jusqu'au" hint="Vide : sans limite"><TextInput type="date" value={f.validUntil} onChange={set('validUntil')} /></Field>
+        {f.kind === 'BLANCHE' && (
+          <Field label="Station" full>
+            <SelectInput value={f.stationId} onChange={set('stationId')} placeholder="Toutes les stations"
+              options={(stations.data || []).map((x) => ({ value: x.id, label: x.name }))} />
+          </Field>
+        )}
+        <Field label="Motif" full><TextInput value={f.reason} onChange={set('reason')} required /></Field>
+      </div>
+    </FormModal>
+  );
+}
+
+/** Points, crédit, listes et remplacement de la carte. */
+function ExtrasCard({ card, can, onModal, onReload }) {
+  const notify = useToast();
+  const debt = card.balance < 0 ? -card.balance : 0;
+  const remove = async (l) => {
+    try {
+      await post(`/card-lists/${l.id}/remove`, { note: 'Retirée depuis la fiche de la carte' });
+      notify(`Carte retirée de la ${LIST_LABEL[l.kind].toLowerCase()}`);
+      onReload();
+    } catch (e) {
+      notify(e.message, 'error');
+    }
+  };
+  const r = card.replacement;
+  return (
+    <Card className="card-pad">
+      <div className="card-title">Fidélité, crédit et listes</div>
+      <div style={{ marginTop: 8 }}>
+        <div className="row between" style={{ padding: '9px 0', borderBottom: '1px solid var(--border)' }}>
+          <span className="row" style={{ gap: 8 }}><Gift size={16} color="var(--orange)" /> <span className="muted">Points du titulaire</span></span>
+          <span className="row" style={{ gap: 8 }}>
+            <span className="strong num">{fcfa(card.loyaltyPoints || 0)}</span>
+            {card.loyaltyPoints > 0 && card.status === 'ACTIVE' && can('FIDELITE', 'RECHARGER') && (
+              <Button size="sm" onClick={() => onModal('redeem')}>Utiliser</Button>
+            )}
+          </span>
+        </div>
+        <div className="row between" style={{ padding: '9px 0', borderBottom: '1px solid var(--border)' }}>
+          <span className="row" style={{ gap: 8 }}><Landmark size={16} color="var(--primary)" /> <span className="muted">Plafond de crédit</span></span>
+          <span className="row" style={{ gap: 8 }}>
+            <span className="strong num">{card.creditLimit ? `${fcfa(card.creditLimit)} F` : 'Prépayée'}</span>
+            {can('CREDIT') && <button className="link-more" onClick={() => onModal('credit')}><Pencil size={15} /></button>}
+          </span>
+        </div>
+        {debt > 0 && (
+          <div className="row between" style={{ padding: '9px 0', borderBottom: '1px solid var(--border)' }}>
+            <span className="muted">Crédit utilisé</span>
+            <span className="strong num" style={{ color: 'var(--red)' }}>{fcfa(debt)} F</span>
+          </div>
+        )}
+        <div style={{ padding: '10px 0 2px' }}>
+          <div className="row between">
+            <span className="row" style={{ gap: 8 }}><ShieldAlert size={16} color="var(--muted-2)" /> <span className="muted">Listes</span></span>
+            {can('CARTES_GERER') && <Button size="sm" onClick={() => onModal('list')}>Ajouter</Button>}
+          </div>
+          {(card.lists || []).length === 0 ? (
+            <div className="muted" style={{ fontSize: 13, marginTop: 6 }}>Sur aucune liste</div>
+          ) : card.lists.map((l) => (
+            <div key={l.id} className="row between" style={{ marginTop: 8, gap: 8 }}>
+              <span style={{ minWidth: 0 }}>
+                <Badge tone={LIST_TONE[l.kind]}>{LIST_LABEL[l.kind]}{l.stationName ? ` · ${l.stationName}` : ''}</Badge>
+                <div className="muted" style={{ fontSize: 12.5, marginTop: 3 }}>
+                  {l.reason}{l.validUntil ? ` · jusqu'au ${longDate(l.validUntil)}` : ''}
+                </div>
+              </span>
+              {can('CARTES_GERER') && (
+                <button className="link-more" title="Retirer de la liste" onClick={() => remove(l)}><X size={15} /></button>
+              )}
+            </div>
+          ))}
+        </div>
+        {r && (
+          <div style={{ marginTop: 12, background: 'var(--surface-2)', borderRadius: 9, padding: '10px 12px', fontSize: 13 }}>
+            {r.oldCardId === card.id ? (
+              <>Remplacée le {longDate(r.at)} ({REPLACE_REASON[r.reason]?.toLowerCase()}) par <Link to={`/cartes/${r.newCardId}`} className="strong num">{masked(r.newNumber)}</Link></>
+            ) : (
+              <>Remplace <Link to={`/cartes/${r.oldCardId}`} className="strong num">{masked(r.oldNumber)}</Link> depuis le {longDate(r.at)} ({REPLACE_REASON[r.reason]?.toLowerCase()})</>
+            )}
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
 /** Éditeur des permissions de la carte (produits, plafonds, jours, horaires, stations, mode autonome). */
 function Permissions({ card, onSaved, editable }) {
   const notify = useToast();
@@ -123,6 +328,10 @@ function Permissions({ card, onSaved, editable }) {
       timeTo: p.timeTo ? hhmm(p.timeTo) : '',
       stationIds: p.stationIds || null,
       autonomousAllowed: p.autonomousAllowed ?? true,
+      dailyVolumeLimit: p.dailyVolumeLimit ?? '',
+      monthlyVolumeLimit: p.monthlyVolumeLimit ?? '',
+      dailyFillsLimit: p.dailyFillsLimit ?? '',
+      minBalance: p.minBalance ?? '',
     };
   };
   const [f, setF] = useState(init);
@@ -155,6 +364,10 @@ function Permissions({ card, onSaved, editable }) {
         timeTo: f.timeTo ? `${f.timeTo}:00` : null,
         stationIds: f.stationIds,
         autonomousAllowed: f.autonomousAllowed,
+        dailyVolumeLimit: f.dailyVolumeLimit === '' ? null : Number(f.dailyVolumeLimit),
+        monthlyVolumeLimit: f.monthlyVolumeLimit === '' ? null : Number(f.monthlyVolumeLimit),
+        dailyFillsLimit: f.dailyFillsLimit === '' ? null : Number(f.dailyFillsLimit),
+        minBalance: f.minBalance === '' ? null : Number(f.minBalance),
       });
       notify('Permissions enregistrées · appliquées immédiatement dans toutes les stations');
       setDirty(false);
@@ -230,6 +443,24 @@ function Permissions({ card, onSaved, editable }) {
             </div>
           );
         })}
+      </div>
+
+      <div className="grid g4" style={{ gap: 12, marginTop: 14 }}>
+        {[
+          ['dailyVolumeLimit', 'Litres par jour', 'L'],
+          ['monthlyVolumeLimit', 'Litres par mois', 'L'],
+          ['dailyFillsLimit', 'Pleins par jour', 'pleins'],
+          ['minBalance', 'Solde à garder', 'FCFA'],
+        ].map(([key, label, unit]) => (
+          <div key={key}>
+            <div className="muted" style={{ fontSize: 12.5, marginBottom: 6 }}>{label}</div>
+            <label className="input" style={{ height: 38 }}>
+              <input className="num" type="number" min="0" placeholder="Sans limite" value={f[key]} disabled={!editable}
+                onChange={(e) => change({ [key]: e.target.value })} />
+              <span className="muted" style={{ fontSize: 12 }}>{unit}</span>
+            </label>
+          </div>
+        ))}
       </div>
 
       <div className="row" style={{ gap: 28, marginTop: 20, alignItems: 'flex-start', flexWrap: 'wrap' }}>
@@ -329,6 +560,7 @@ export default function CarteDetail() {
   const [page, setPage] = useState(0);
   const ops = useApi(`/cards/${id}/operations?page=${page}&size=10`);
   const [modal, setModal] = useState(null);
+  const loyaltyInfo = useApi(can('FIDELITE', 'TRANSACTIONS') ? '/loyalty/summary' : null);
   const reload = () => {
     card.reload();
     ops.reload();
@@ -366,6 +598,8 @@ export default function CarteDetail() {
                   <Badge tone="gray">{TECHNO[c.techno] || c.techno}</Badge>
                   {c.groupName && <Badge tone="blue" style={{ background: 'var(--primary-50)' }}>Groupe : {c.groupName}</Badge>}
                   {blocked && c.blockedReason && <Badge tone="red">{c.blockedReason}</Badge>}
+                  {(c.lists || []).map((l) => <Badge key={l.id} tone={LIST_TONE[l.kind]}>{LIST_LABEL[l.kind]}{l.stationName ? ` · ${l.stationName}` : ''}</Badge>)}
+                  {c.creditLimit > 0 && <Badge tone="purple">Crédit {fcfa(c.creditLimit)} F</Badge>}
                 </>
               }
               actions={
@@ -378,6 +612,12 @@ export default function CarteDetail() {
                   )}
                   {can('CARTES_GERER') && blocked && <Button icon={LockOpen} onClick={() => act('unblock', 'Carte débloquée')}>Débloquer</Button>}
                   {can('CARTES_GERER', 'RECHARGER') && <Button icon={KeyRound} onClick={() => setModal('pin')}>Code PIN</Button>}
+                  {can('RECHARGER', 'CARTES_GERER', 'FLOTTES') && c.status === 'ACTIVE' && c.balance > 0 && (
+                    <Button icon={ArrowLeftRight} onClick={() => setModal('transfer')}>Transférer</Button>
+                  )}
+                  {can('CARTES_GERER') && c.holderId && ['ACTIVE', 'BLOQUEE', 'A_ACTIVER'].includes(c.status) && !(c.replacement && c.replacement.oldCardId === c.id) && (
+                    <Button icon={RefreshCw} onClick={() => setModal('replace')}>Remplacer</Button>
+                  )}
                   {can('CARTES_GERER') && <Button icon={Pencil} onClick={() => setModal('edit')}>Modifier</Button>}
                   {can('RECHARGER') && c.status === 'ACTIVE' && (
                     <Button variant="primary" icon={Wallet} onClick={() => navigate(`/rechargements?card=${c.number}`)}>Recharger</Button>
@@ -391,10 +631,16 @@ export default function CarteDetail() {
                 <BankCard number={c.numberFormatted} holder={(c.holderName || '').toUpperCase()} exp={expiry(c.expiresOn)} kind={c.typeLabel.toUpperCase()} large />
 
                 <Card className="card-pad">
-                  <div className="muted">Solde disponible</div>
-                  <div className="num" style={{ fontSize: 30, fontWeight: 700, margin: '12px 0 18px', letterSpacing: '-0.02em' }}>
+                  <div className="muted">{c.creditLimit > 0 ? 'Solde' : 'Solde disponible'}</div>
+                  <div className="num" style={{ fontSize: 30, fontWeight: 700, margin: c.creditLimit > 0 ? '12px 0 4px' : '12px 0 18px', letterSpacing: '-0.02em',
+                    color: c.balance < 0 ? 'var(--red)' : undefined }}>
                     {fcfa(c.balance)} <small className="muted" style={{ fontSize: 14, fontWeight: 600 }}>FCFA</small>
                   </div>
+                  {c.creditLimit > 0 && (
+                    <div className="muted" style={{ fontSize: 13, marginBottom: 14 }}>
+                      Disponible avec le crédit : <b className="num" style={{ color: 'var(--text)' }}>{fcfa(c.balance + c.creditLimit)} F</b>
+                    </div>
+                  )}
                   <div className="grid g2" style={{ gap: 12 }}>
                     {[['Rechargé ce mois', money(c.usage?.rechargedMonth)], ['Consommé ce mois', money(c.usage?.spentMonth)]].map(([l, v]) => (
                       <div key={l} style={{ background: 'var(--surface-2)', borderRadius: 9, padding: '12px 14px' }}>
@@ -422,6 +668,8 @@ export default function CarteDetail() {
                     <KV k="Code PIN" v={c.hasPin ? 'Défini' : 'Non défini'} />
                   </div>
                 </Card>
+
+                <ExtrasCard card={c} can={can} onModal={setModal} onReload={reload} />
               </div>
 
               <div className="stack">
@@ -466,6 +714,11 @@ export default function CarteDetail() {
             {modal === 'edit' && <EditCardModal card={c} onClose={() => setModal(null)} onSaved={reload} />}
             {modal === 'block' && <BlockModal card={c} onClose={() => setModal(null)} onSaved={reload} />}
             {modal === 'pin' && <PinModal card={c} onClose={() => setModal(null)} />}
+            {modal === 'transfer' && <TransferModal card={c} onClose={() => setModal(null)} onSaved={reload} />}
+            {modal === 'replace' && <ReplaceModal card={c} onClose={() => setModal(null)} onDone={(r) => navigate(`/cartes/${r.newCardId}`)} />}
+            {modal === 'redeem' && <RedeemModal card={c} info={loyaltyInfo.data} onClose={() => setModal(null)} onSaved={reload} />}
+            {modal === 'credit' && <CreditModal card={c} onClose={() => setModal(null)} onSaved={reload} />}
+            {modal === 'list' && <ListModal card={c} onClose={() => setModal(null)} onSaved={reload} />}
           </>
         );
       }}

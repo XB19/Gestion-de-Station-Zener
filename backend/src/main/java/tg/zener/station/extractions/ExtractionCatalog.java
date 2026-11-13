@@ -1020,7 +1020,7 @@ public class ExtractionCatalog {
                 .col("detail", "Produits", TEXT)
                 .sum("amount", "Montant (F)", MONEY)
                 .select("\sb.ref, h.name AS holder, l.at AS date, " + cardNo("c") + " AS card, c.vehicle_plate AS vehicle, c.driver_name AS driver,"
-                        + " st.short_name AS place, (SELECT string_agg(sl.quantity || ' ' || p.unit || ' ' || p.name, ', ') FROM sale_line sl"
+                        + " st.short_name AS place, (SELECT string_agg(trim_scale(sl.quantity) || ' ' || p.unit || ' ' || p.name, ', ') FROM sale_line sl"
                         + " JOIN product p ON p.id = sl.product_id WHERE sl.sale_id = l.sale_id) AS detail, l.amount")
                 .from("""
                         \scredit_bill_line l

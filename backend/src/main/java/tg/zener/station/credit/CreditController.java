@@ -87,7 +87,7 @@ public class CreditController {
                 FROM credit_bill b JOIN holder h ON h.id = b.holder_id WHERE b.id = :id""", Db.p("id", id), "Relevé introuvable");
         List<Map<String, Object>> lines = db.list("""
                 \sSELECT l.at, l.amount, c.number, c.vehicle_plate, c.driver_name, s.short_name AS station_name,
-                       (SELECT string_agg(sl.quantity || ' ' || p.unit || ' ' || p.name, ', ') FROM sale_line sl JOIN product p ON p.id = sl.product_id
+                       (SELECT string_agg(trim_scale(sl.quantity) || ' ' || p.unit || ' ' || p.name, ', ') FROM sale_line sl JOIN product p ON p.id = sl.product_id
                         WHERE sl.sale_id = l.sale_id) AS detail
                 FROM credit_bill_line l JOIN card c ON c.id = l.card_id LEFT JOIN sale x ON x.id = l.sale_id LEFT JOIN station s ON s.id = x.station_id
                 WHERE l.bill_id = :id ORDER BY l.at""", Db.p("id", id));
