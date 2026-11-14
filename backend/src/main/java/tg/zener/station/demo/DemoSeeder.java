@@ -170,7 +170,6 @@ public class DemoSeeder {
     private final DemoAvatars avatars;
     private final CardEvents cardEvents;
     private final DemoTanks demoTanks;
-    private final DemoFleets demoFleets;
     private final DemoExtras demoExtras;
     private final TransactionTemplate tx;
     private final boolean enabled;
@@ -200,7 +199,7 @@ public class DemoSeeder {
     public DemoSeeder(Db db, PasswordEncoder encoder, CardIssuer issuer, Refs refs, Settings settings,
                       RechargeService rechargeService, ValidationService validations, ThresholdService thresholds,
                       ReportService reports, UserLoader users, DemoSimulator simulator, DemoAvatars avatars, CardEvents cardEvents, DemoTanks demoTanks,
-                      DemoFleets demoFleets, DemoExtras demoExtras,
+                      DemoExtras demoExtras,
                       PlatformTransactionManager tm,
                       @Value("${app.demo-data}") boolean enabled) {
         this.db = db;
@@ -217,7 +216,6 @@ public class DemoSeeder {
         this.avatars = avatars;
         this.cardEvents = cardEvents;
         this.demoTanks = demoTanks;
-        this.demoFleets = demoFleets;
         this.demoExtras = demoExtras;
         this.tx = new TransactionTemplate(tm);
         this.enabled = enabled;
@@ -237,7 +235,6 @@ public class DemoSeeder {
             }
             avatars.ensureAll();
             cardEvents.backfill();
-            demoFleets.ensure();
             demoExtras.ensureBeforeTanks();
             demoTanks.ensure();
             demoExtras.ensureAfterTanks();
@@ -266,7 +263,6 @@ public class DemoSeeder {
                 (System.currentTimeMillis() - t0) / 1000, PASSWORD);
         avatars.ensureAll();
         cardEvents.backfill();
-        demoFleets.ensure();
         demoExtras.ensureBeforeTanks();
         demoTanks.ensure();
         demoExtras.ensureAfterTanks();

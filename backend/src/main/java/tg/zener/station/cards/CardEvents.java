@@ -34,8 +34,8 @@ public class CardEvents {
                          WHEN 'PIN' THEN 'Code PIN' WHEN 'ATTRIBUTION_PDV' THEN 'Attribution à un PDV'
                          WHEN 'RETOUR_STOCK' THEN 'Retour au stock' WHEN 'VENTE_PDV' THEN 'Vente en PDV'
                          WHEN 'DESACTIVATION' THEN 'Désactivation' WHEN 'REMPLACEMENT' THEN 'Remplacement'
-                         WHEN 'AFFECTATION' THEN 'Affectation véhicule / chauffeur'
-                         WHEN 'LISTE' THEN 'Liste de cartes' WHEN 'TRANSFERT' THEN 'Transfert de solde' ELSE ce.kind END""";
+                         WHEN 'AFFECTATION' THEN 'Attribution à une flotte' WHEN 'TRANSFERT' THEN 'Transfert de solde'
+                         ELSE ce.kind END""";
 
     private final Db db;
 

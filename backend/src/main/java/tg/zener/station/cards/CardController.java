@@ -52,8 +52,8 @@ public class CardController {
             LEFT JOIN LATERAL (
                 SELECT * FROM (
                     SELECT m.at, CASE m.kind WHEN 'RECHARGE' THEN CASE WHEN r.channel = 'MASSE' THEN 'Recharge masse' ELSE 'Recharge' END
-                                             WHEN 'VENTE' THEN 'Vente ' || COALESCE(m.detail, '') WHEN 'DOTATION' THEN 'Dotation flotte'
-                                             WHEN 'REPRISE' THEN 'Reprise flotte' ELSE 'Ajustement' END AS label
+                                             WHEN 'VENTE' THEN 'Vente ' || COALESCE(m.detail, '') WHEN 'TRANSFERT' THEN 'Transfert'
+                                             WHEN 'FRAIS' THEN 'Frais' ELSE 'Ajustement' END AS label
                     FROM card_movement m LEFT JOIN recharge r ON r.id = m.recharge_id
                     WHERE m.card_id = c.id
                     UNION ALL
@@ -167,8 +167,8 @@ public class CardController {
         }
         decorate(c);
         c.putAll(db.one("""
-                \sSELECT c.vehicle_plate, c.driver_name, c.blocked_reason, c.activated_at, c.sold_at, c.credit_limit,
-                       (c.pin_hash IS NOT NULL) AS has_pin, h.loyalty_points, c.vehicle_id, c.driver_id,
+                \sSELECT c.vehicle_plate, c.driver_name, c.blocked_reason, c.activated_at, c.sold_at,
+                       (c.pin_hash IS NOT NULL) AS has_pin,
                        h.id_doc_type, h.id_doc_number, h.phone AS holder_phone, h.email AS holder_email, h.profile AS holder_profile,
                        ie.first_name || ' ' || ie.last_name AS issued_by_name,
                        ae.first_name || ' ' || ae.last_name AS activated_by_name,
@@ -184,12 +184,7 @@ public class CardController {
                        autonomous_allowed, daily_volume_limit, monthly_volume_limit, daily_fills_limit, min_balance, updated_at
                 FROM card_permission WHERE card_id = :id""", Db.p("id", id));
         c.put("permissions", perm);
-        // listes en cours (noire, grise, blanche) et remplacements
-        c.put("lists", db.list("""
-                \sSELECT l.id, l.kind, l.reason, l.added_at, l.valid_until, s.short_name AS station_name
-                FROM card_list l LEFT JOIN station s ON s.id = l.station_id
-                WHERE l.card_id = :id AND l.removed_at IS NULL AND (l.valid_until IS NULL OR l.valid_until > now())
-                ORDER BY l.added_at""", Db.p("id", id)));
+        // remplacement (ancienne ou nouvelle carte)
         c.put("replacement", db.one("""
                 \sSELECT r.reason, r.at, r.new_card_id, n.number AS new_number, r.old_card_id, o.number AS old_number
                 FROM card_replacement r JOIN card n ON n.id = r.new_card_id JOIN card o ON o.id = r.old_card_id

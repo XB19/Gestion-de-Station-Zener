@@ -113,14 +113,10 @@ public class CardService {
 
     static final String CARD_SELECT = """
             \sSELECT c.id, c.number, c.type_code, c.techno, c.status, c.balance, c.pin_hash, c.expires_on, c.holder_id,
-                   c.group_id, c.credit_limit, h.kind AS holder_kind, h.name AS holder_name, h.profile AS holder_profile,
+                   c.group_id, h.kind AS holder_kind, h.name AS holder_name, h.profile AS holder_profile,
                    cp.products, cp.daily_limit, cp.monthly_limit, cp.per_tx_limit, cp.days, cp.time_from, cp.time_to,
                    cp.station_ids, cp.autonomous_allowed, cp.daily_volume_limit, cp.monthly_volume_limit, cp.daily_fills_limit,
-                   cp.min_balance,
-                   EXISTS (SELECT 1 FROM card_list l WHERE l.card_id = c.id AND l.kind = 'NOIRE' AND l.removed_at IS NULL
-                           AND (l.valid_until IS NULL OR l.valid_until > now())) AS blacklisted,
-                   EXISTS (SELECT 1 FROM card_list l WHERE l.card_id = c.id AND l.kind = 'GRISE' AND l.removed_at IS NULL
-                           AND (l.valid_until IS NULL OR l.valid_until > now())) AS graylisted
+                   cp.min_balance
             FROM card c LEFT JOIN holder h ON h.id = c.holder_id LEFT JOIN card_permission cp ON cp.card_id = c.id""";
 
     /** Montants déjà dépensés par la carte aujourd'hui et ce mois-ci. */
@@ -159,7 +155,7 @@ public class CardService {
                 \sUPDATE card SET balance = balance - :t WHERE id = :id AND balance - :t >= :floor RETURNING balance""",
                 Db.p("id", id, "t", total, "floor", floor(card)), Long.class);
         if (balance == null) {
-            refuse(card, ch, "SOLDE_INSUFFISANT", credit(card) ? "Plafond de crédit atteint" : "Solde insuffisant");
+            refuse(card, ch, "SOLDE_INSUFFISANT", "Solde insuffisant");
         }
         db.update("""
                 \sINSERT INTO card_movement (card_id, kind, amount, balance_after, station_id, sale_id, detail, employee_id)
@@ -169,17 +165,8 @@ public class CardService {
         return card;
     }
 
-    /** Carte de crédit : le solde peut devenir négatif jusqu'au plafond de crédit. */
-    static boolean credit(Map<String, Object> card) {
-        Long limit = num(card.get("creditLimit"));
-        return limit != null && limit > 0;
-    }
-
-    /** Solde le plus bas autorisé après un paiement. */
+    /** Solde le plus bas autorisé après un paiement (solde minimum à garder, 0 par défaut). */
     static long floor(Map<String, Object> card) {
-        if (credit(card)) {
-            return -num(card.get("creditLimit"));
-        }
         Long min = num(card.get("minBalance"));
         return min == null ? 0 : min;
     }
@@ -190,9 +177,6 @@ public class CardService {
     }
 
     private void check(Map<String, Object> card, Charge ch, boolean withAmount) {
-        if (Boolean.TRUE.equals(card.get("blacklisted"))) {
-            refuse(card, ch, "CARTE_OPPOSITION", "Carte en opposition (liste noire)");
-        }
         String status = (String) card.get("status");
         if (!"ACTIVE".equals(status)) {
             refuse(card, ch, "CARTE_INACTIVE", switch (status) {
@@ -204,8 +188,7 @@ public class CardService {
         if (card.get("expiresOn") != null && ((LocalDate) card.get("expiresOn")).isBefore(LocalDate.now())) {
             refuse(card, ch, "CARTE_EXPIREE", "Carte expirée");
         }
-        // carte sous surveillance (liste grise) : code PIN exigé à chaque paiement
-        if (ch.requirePin() || ch.pin() != null || Boolean.TRUE.equals(card.get("graylisted"))) {
+        if (ch.requirePin() || ch.pin() != null) {
             String hash = (String) card.get("pinHash");
             if (hash == null) {
                 refuse(card, ch, "PIN_NON_DEFINI", "Code PIN non défini");
@@ -268,7 +251,7 @@ public class CardService {
         }
         checkVolume(card, ch);
         if (available(card) < total) {
-            refuse(card, ch, "SOLDE_INSUFFISANT", credit(card) ? "Plafond de crédit atteint" : "Solde insuffisant");
+            refuse(card, ch, "SOLDE_INSUFFISANT", "Solde insuffisant");
         }
     }
 

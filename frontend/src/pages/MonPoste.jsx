@@ -20,7 +20,6 @@ function PumpSale({ station, onSold }) {
   const [payment, setPayment] = useState('ESPECES');
   const [card, setCard] = useState(null);
   const [pin, setPin] = useState('');
-  const [km, setKm] = useState('');
   const [ref, setRef] = useState('');
   const [quote, setQuote] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -49,12 +48,10 @@ function PumpSale({ station, onSold }) {
         uuid: crypto.randomUUID(), pumpId: Number(pumpId), liters: Number(qty), paymentMethod: payment,
         paymentRef: payment === 'MOBILE_MONEY' ? ref || null : null,
         cardNumber: payment === 'CARTE' ? card.number : null, pin: payment === 'CARTE' ? pin || null : null,
-        odometerKm: payment === 'CARTE' && card?.vehiclePlate && km ? Number(km) : null,
       });
       notify(`Vente enregistrée · ${num(qty, 1)} L · ${money(s.total)}`);
       setPin('');
       setRef('');
-      setKm('');
       onSold();
     } catch (err) {
       notify(err.message, 'error');
@@ -114,9 +111,6 @@ function PumpSale({ station, onSold }) {
           <div style={{ marginTop: 10, display: 'grid', gap: 10 }}>
             <CardPicker value={card} onChange={setCard} />
             <label className="input"><input type="password" inputMode="numeric" value={pin} onChange={(e) => setPin(e.target.value)} placeholder={autonomous ? 'PIN (obligatoire)' : 'PIN (facultatif)'} /></label>
-            {card?.vehiclePlate && (
-              <label className="input"><input type="number" min="0" value={km} onChange={(e) => setKm(e.target.value)} placeholder={`Kilométrage du véhicule ${card.vehiclePlate} (facultatif)`} /></label>
-            )}
           </div>
         )}
         <div className="row between" style={{ background: 'var(--navy)', color: '#fff', borderRadius: 12, padding: '14px 20px', marginTop: 16 }}>

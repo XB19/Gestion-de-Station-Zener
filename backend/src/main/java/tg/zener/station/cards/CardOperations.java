@@ -1,6 +1,5 @@
 package tg.zener.station.cards;
 
-import java.time.Instant;
 import java.time.Year;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -13,8 +12,7 @@ import tg.zener.station.journal.Journal;
 
 /**
  * Opérations de service sur les cartes (phases 2c et 2f) : transfert de solde entre deux cartes du même titulaire,
- * listes de cartes (noire : opposition ; grise : surveillance ; blanche : acceptée hors connexion par une station),
- * remplacement d'une carte perdue, volée ou abîmée (solde reporté, frais, opposition de l'ancienne).
+ * remplacement d'une carte perdue, volée ou abîmée (solde reporté, frais, ancienne carte bloquée).
  */
 @Service
 public class CardOperations {
@@ -35,7 +33,7 @@ public class CardOperations {
 
     private Map<String, Object> lock(long cardId) {
         return db.require("""
-                \sSELECT id, number, status, balance, holder_id, group_id, type_code, techno, credit_limit, vehicle_id, driver_id,
+                \sSELECT id, number, status, balance, holder_id, group_id, type_code, techno,
                        vehicle_plate, vehicle_label, driver_name, pin_hash, expires_on
                 FROM card WHERE id = :id FOR UPDATE""", Db.p("id", cardId), "Carte introuvable");
     }
@@ -78,7 +76,7 @@ public class CardOperations {
         return db.one("SELECT * FROM card_transfer WHERE id = :id", Db.p("id", id));
     }
 
-    /** Écritures d'un transfert (montant éventuellement négatif pour reporter une dette de carte de crédit). */
+    /** Écritures d'un transfert. */
     private long move(Map<String, Object> from, Map<String, Object> to, long amount, String reason, String note, Long employeeId) {
         long fromBefore = num(from.get("balance"));
         long toBefore = num(to.get("balance"));
@@ -105,57 +103,11 @@ public class CardOperations {
         return id;
     }
 
-    // ------------------------------------------------------------------ listes
-
-    /** Ajout en liste (NOIRE, GRISE, BLANCHE) ; une liste blanche peut viser une station. */
-    @Transactional
-    public Map<String, Object> list(long cardId, String kind, Long stationId, String reason, Instant validUntil, Long employeeId) {
-        Map<String, Object> c = db.require("SELECT number FROM card WHERE id = :id", Db.p("id", cardId), "Carte introuvable");
-        if (!"BLANCHE".equals(kind) && stationId != null) {
-            throw new ApiException("Seule la liste blanche se rapporte à une station");
-        }
-        Long id = db.value("""
-                \sINSERT INTO card_list (kind, card_id, station_id, reason, added_by, valid_until)
-                VALUES (:k, :c, :s, :r, :e, CAST(:v AS timestamptz)) ON CONFLICT DO NOTHING RETURNING id""",
-                Db.p("k", kind, "c", cardId, "s", stationId, "r", reason, "e", employeeId,
-                        "v", validUntil == null ? null : java.sql.Timestamp.from(validUntil)), Long.class);
-        if (id == null) {
-            throw ApiException.conflict("Cette carte est déjà dans cette liste");
-        }
-        events.recordAs(employeeId, cardId, "LISTE", label(kind) + " · " + reason, stationId, null);
-        journal.logAs(employeeId, "LISTE_CARTE", "NOIRE".equals(kind) ? Journal.MODIFICATIONS : Journal.SYSTEME,
-                "Carte ajoutée à la " + label(kind).toLowerCase(), CardService.mask((String) c.get("number")) + " · " + reason, null,
-                stationId, null);
-        return db.one("SELECT * FROM card_list WHERE id = :id", Db.p("id", id));
-    }
-
-    /** Retrait d'une liste (levée d'opposition, fin de surveillance…). */
-    @Transactional
-    public void unlist(long listId, String note, long employeeId) {
-        Map<String, Object> l = db.require("""
-                \sUPDATE card_list SET removed_at = now(), removed_by = :e, removal_note = :n WHERE id = :id AND removed_at IS NULL
-                RETURNING card_id, kind""", Db.p("id", listId, "e", employeeId, "n", note), "Entrée de liste introuvable ou déjà levée");
-        events.recordAs(employeeId, num(l.get("cardId")), "LISTE", "Retrait de la " + label((String) l.get("kind")).toLowerCase()
-                + (note == null ? "" : " · " + note), null, null);
-        journal.logAs(employeeId, "LISTE_CARTE", Journal.MODIFICATIONS, "Carte retirée de la " + label((String) l.get("kind")).toLowerCase(),
-                note, null, null, null);
-    }
-
-    public static String label(String kind) {
-        return switch (kind) {
-            case "NOIRE" -> "Liste noire";
-            case "GRISE" -> "Liste grise";
-            case "BLANCHE" -> "Liste blanche";
-            default -> kind;
-        };
-    }
-
     // ------------------------------------------------------------------ remplacement
 
     /**
      * Remplacement d'une carte perdue, volée ou abîmée : nouvelle carte « à activer » pour le même titulaire
-     * (groupe, véhicule, chauffeur, plafonds, crédit, PIN repris), l'ancienne est bloquée (et mise en opposition
-     * en cas de perte ou de vol), son solde — diminué des frais — est reporté sur la nouvelle.
+     * (groupe, véhicule, chauffeur, plafonds, PIN repris), l'ancienne est bloquée, son solde — diminué des frais — est reporté sur la nouvelle.
      */
     @Transactional
     public Map<String, Object> replace(long cardId, String reason, String newNumber, String note, long employeeId) {
@@ -167,8 +119,7 @@ public class CardOperations {
         long newId = issuer.issue(newNumber, (String) old.get("typeCode"), (String) old.get("techno"), num(old.get("holderId")),
                 old.get("groupId") == null ? null : num(old.get("groupId")), employeeId, null);
         db.update("""
-                \sUPDATE card n SET vehicle_id = o.vehicle_id, driver_id = o.driver_id, vehicle_plate = o.vehicle_plate,
-                       vehicle_label = o.vehicle_label, driver_name = o.driver_name, credit_limit = o.credit_limit,
+                \sUPDATE card n SET vehicle_plate = o.vehicle_plate, vehicle_label = o.vehicle_label, driver_name = o.driver_name,
                        pin_hash = COALESCE(n.pin_hash, o.pin_hash), expires_on = GREATEST(n.expires_on, o.expires_on)
                 FROM card o WHERE n.id = :n AND o.id = :o""", Db.p("n", newId, "o", cardId));
         db.update("""
@@ -186,12 +137,7 @@ public class CardOperations {
         };
         db.update("UPDATE card SET status = 'BLOQUEE', blocked_reason = :r WHERE id = :id",
                 Db.p("id", cardId, "r", "Remplacée (" + label + ")"));
-        if ("PERTE".equals(reason) || "VOL".equals(reason)) {
-            db.update("""
-                    \sINSERT INTO card_list (kind, card_id, reason, added_by) VALUES ('NOIRE', :c, :r, :e) ON CONFLICT DO NOTHING""",
-                    Db.p("c", cardId, "r", "Carte déclarée " + ("VOL".equals(reason) ? "volée" : "perdue"), "e", employeeId));
-        }
-        // frais de remplacement prélevés sur le solde, puis report du solde (une dette de crédit suit la nouvelle carte)
+        // frais de remplacement prélevés sur le solde, puis report du solde sur la nouvelle carte
         long balance = num(old.get("balance"));
         long fee = Math.min(settings.getLong("card.replacement_fee", 1000), Math.max(balance, 0));
         if (fee > 0) {
@@ -202,7 +148,7 @@ public class CardOperations {
                     VALUES (:c, 'FRAIS', :a, :b, 'Frais de remplacement', :e)""", Db.p("c", cardId, "a", -fee, "b", balance, "e", employeeId));
         }
         Long transferId = null;
-        if (balance != 0) {
+        if (balance > 0) {
             old.put("balance", balance);
             Map<String, Object> fresh = lock(newId);
             transferId = move(old, fresh, balance, "REMPLACEMENT", "Remplacement (" + label + ")", employeeId);
@@ -224,25 +170,6 @@ public class CardOperations {
         out.put("balanceTransferred", balance);
         out.put("fee", fee);
         return out;
-    }
-
-    // ------------------------------------------------------------------ crédit
-
-    /** Plafond de crédit d'une carte (0 : carte prépayée). Le solde actuel doit rester au-dessus du nouveau plancher. */
-    @Transactional
-    public void creditLimit(long cardId, long limit, long employeeId) {
-        Map<String, Object> c = lock(cardId);
-        if (limit < 0) {
-            throw new ApiException("Plafond invalide");
-        }
-        if (num(c.get("balance")) < -limit) {
-            throw ApiException.conflict("La carte doit " + fmt(-num(c.get("balance"))) + " F : plafond inférieur impossible");
-        }
-        db.update("UPDATE card SET credit_limit = :l WHERE id = :id", Db.p("id", cardId, "l", limit));
-        events.recordAs(employeeId, cardId, "MODIFICATION", limit == 0 ? "Carte prépayée (crédit retiré)"
-                : "Plafond de crédit · " + fmt(limit) + " F", null, null);
-        journal.logAs(employeeId, "CREDIT_CARTE", Journal.MODIFICATIONS, "Plafond de crédit modifié",
-                CardService.mask((String) c.get("number")) + " · " + fmt(num(c.get("creditLimit"))) + " → " + fmt(limit) + " F", null, null, null);
     }
 
     static String fmt(long v) {

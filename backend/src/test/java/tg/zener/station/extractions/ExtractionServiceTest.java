@@ -77,7 +77,7 @@ class ExtractionServiceTest {
                 assertTrue(e.select().contains(c.alias()), e.code() + " : colonne " + c.alias() + " absente du SELECT");
             }
         }
-        assertEquals(43, catalog.list().size());
+        assertEquals(29, catalog.list().size());
     }
 
     @Test

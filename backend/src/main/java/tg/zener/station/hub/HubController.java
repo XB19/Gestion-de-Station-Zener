@@ -19,17 +19,15 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-import tg.zener.station.cards.CardOperations;
 import tg.zener.station.cards.CardService;
 import tg.zener.station.common.ApiException;
 import tg.zener.station.common.Db;
+import tg.zener.station.tanks.TankService;
 import tg.zener.station.common.LiveFeed;
-import tg.zener.station.fleets.FleetService;
 import tg.zener.station.mobility.Tracking;
 import tg.zener.station.sales.SaleService;
 import tg.zener.station.stations.StationService;
 import tg.zener.station.stock.StockService;
-import tg.zener.station.tanks.TankService;
 
 /**
  * API du PC station. Le hub de la station envoie un flux binaire sur un port série ; le programme
@@ -44,19 +42,15 @@ public class HubController {
     private final StationService stations;
     private final StockService stock;
     private final TankService tanks;
-    private final FleetService fleets;
-    private final CardOperations cardOps;
     private final CardService cards;
     private final SaleService sales;
     private final Tracking tracking;
     private final LiveFeed live;
 
     public HubController(Db db, StationService stations, StockService stock, CardService cards, SaleService sales,
-                         Tracking tracking, LiveFeed live, TankService tanks, FleetService fleets, CardOperations cardOps) {
-        this.cardOps = cardOps;
+                         Tracking tracking, LiveFeed live, TankService tanks) {
         this.db = db;
         this.tanks = tanks;
-        this.fleets = fleets;
         this.stations = stations;
         this.stock = stock;
         this.cards = cards;
@@ -144,14 +138,6 @@ public class HubController {
         s.put("tanks", db.list("""
                 \sSELECT t.id, t.name, p.code AS product_code, t.capacity, t.volume FROM tank t
                 JOIN product p ON p.id = t.product_id WHERE t.station_id = :s ORDER BY t.id""", Db.p("s", stationId)));
-        // listes de cartes pour le fonctionnement hors connexion : opposition (refus) et liste blanche de la station
-        s.put("blacklist", db.list("""
-                \sSELECT c.number, l.reason FROM card_list l JOIN card c ON c.id = l.card_id
-                WHERE l.kind = 'NOIRE' AND l.removed_at IS NULL AND (l.valid_until IS NULL OR l.valid_until > now()) ORDER BY c.number"""));
-        s.put("whitelist", db.list("""
-                \sSELECT c.number, l.valid_until FROM card_list l JOIN card c ON c.id = l.card_id
-                WHERE l.kind = 'BLANCHE' AND l.removed_at IS NULL AND (l.valid_until IS NULL OR l.valid_until > now())
-                  AND (l.station_id IS NULL OR l.station_id = :s) AND c.status = 'ACTIVE' ORDER BY c.number""", Db.p("s", stationId)));
         s.put("prices", db.list("""
                 \sSELECT p.code AS product_code, p.name, p.category, pp.price, p.deposit_amount
                 FROM product p JOIN product_price pp ON pp.product_id = p.id AND pp.profile = 'GRAND_PUBLIC'
@@ -208,8 +194,7 @@ public class HubController {
     // ------------------------------------------------------------------ ventes
 
     public record HubSale(@NotNull UUID uuid, String pumpCode, String port, @NotNull @Positive BigDecimal liters,
-                          String paymentMethod, String paymentRef, String cardNumber, String pin, Instant at,
-                          Integer odometerKm) {}
+                          String paymentMethod, String paymentRef, String cardNumber, String pin, Instant at) {}
 
     /**
      * Vente carburant relevée par le hub. Idempotente (uuid) : un renvoi après une coupure ne crée
@@ -240,27 +225,10 @@ public class HubController {
                 WHERE es.station_id = :s AND es.status = 'EN_POSTE'
                   AND es.pumps ~ ('(^|[^A-Za-z0-9])' || :code || '([^A-Za-z0-9]|$)')
                 ORDER BY es.started_at DESC LIMIT 1""", Db.p("s", stationId, "code", pump.get("code")), Long.class);
-        Map<String, Object> sale;
-        try {
-            sale = sales.record(new SaleService.Sale(f.uuid(), stationId, null, "CARBURANT", "POMPE",
-                    num(pump.get("id")), List.of(new SaleService.Line((String) pump.get("productCode"), f.liters(), false)),
-                    payment, f.paymentRef(), byCard ? f.cardNumber() : null, f.pin(), false,
-                    "AUTONOME".equals(s.get("mode")) ? null : employee, at, late, null));
-        } catch (ApiException e) {
-            // transaction faite hors connexion puis refusée à la synchronisation : la carte passe en liste grise
-            if (late && byCard && e.status().value() == 422) {
-                Long cardId = db.value("SELECT id FROM card WHERE number = :n", Db.p("n", f.cardNumber().replaceAll("[^0-9]", "")), Long.class);
-                if (cardId != null) {
-                    try {
-                        cardOps.list(cardId, "GRISE", null, "Transaction hors ligne refusée à la synchronisation · " + e.getMessage(), null, null);
-                    } catch (ApiException alreadyListed) {
-                        // déjà sous surveillance
-                    }
-                }
-            }
-            throw e;
-        }
-        fleets.odometer(num(sale.get("id")), f.odometerKm());
+        Map<String, Object> sale = sales.record(new SaleService.Sale(f.uuid(), stationId, null, "CARBURANT", "POMPE",
+                num(pump.get("id")), List.of(new SaleService.Line((String) pump.get("productCode"), f.liters(), false)),
+                payment, f.paymentRef(), byCard ? f.cardNumber() : null, f.pin(), false,
+                "AUTONOME".equals(s.get("mode")) ? null : employee, at, late, null));
         db.update("UPDATE pump SET state = 'LIBRE', current_volume = NULL WHERE id = :id AND state = 'DISTRIBUE'",
                 Db.p("id", pump.get("id")));
         return sale;

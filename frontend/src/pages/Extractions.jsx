@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Download, FileSpreadsheet, FileText, X, Building2, User, Calendar, Fuel, Store, Package, Layers,
-  Timer, Database, ChevronDown, CarFront, IdCard,
+  Timer, Database, ChevronDown,
 } from 'lucide-react';
 import { PageHeader, Card, Badge, Button, Select, Async, Empty, Pager } from '../components/ui.jsx';
 import CardPicker from '../components/CardPicker.jsx';
@@ -13,7 +13,6 @@ import { dateTime, fcfa, isoDay, num } from '../lib/format.js';
 /** Libellés des filtres (noms renvoyés par l'API). */
 const FILTER_LABELS = {
   period: 'Période', station: 'Station', pdv: 'Point de vente', card: 'Carte', holder: 'Client', group: 'Groupe de cartes',
-  vehicle: 'Véhicule', driver: 'Chauffeur',
   product: 'Produit', employee: 'Opérateur', shift: 'Poste',
 };
 
@@ -22,10 +21,7 @@ const firstOfMonth = () => {
   return isoDay(new Date(d.getFullYear(), d.getMonth(), 1));
 };
 
-const EMPTY = {
-  from: firstOfMonth(), to: isoDay(), stationId: '', pdvId: '', card: null, holder: null, groupId: '', vehicleId: '', driverId: '',
-  productId: '', employee: null, shiftId: '',
-};
+const EMPTY = { from: firstOfMonth(), to: isoDay(), stationId: '', pdvId: '', card: null, holder: null, groupId: '', productId: '', employee: null, shiftId: '' };
 
 /** Valeur d'une cellule selon le type de colonne. */
 function cell(v, type) {
@@ -50,8 +46,6 @@ function params(f, supported) {
   if (supported.includes('card')) p.cardId = f.card?.id;
   if (supported.includes('holder')) p.holderId = f.holder?.id;
   if (supported.includes('group')) p.groupId = f.groupId;
-  if (supported.includes('vehicle')) p.vehicleId = f.vehicleId;
-  if (supported.includes('driver')) p.driverId = f.driverId;
   if (supported.includes('product')) p.productId = f.productId;
   if (supported.includes('employee')) p.employeeId = f.employee?.id;
   if (supported.includes('shift')) p.shiftId = f.shiftId;
@@ -61,8 +55,7 @@ function params(f, supported) {
 /** Filtres renseignés mais non applicables à l'extraction choisie. */
 function unused(f, supported) {
   const set = {
-    station: f.stationId, pdv: f.pdvId, card: f.card, holder: f.holder, group: f.groupId, vehicle: f.vehicleId, driver: f.driverId,
-    product: f.productId,
+    station: f.stationId, pdv: f.pdvId, card: f.card, holder: f.holder, group: f.groupId, product: f.productId,
     employee: f.employee, shift: f.shiftId,
   };
   return Object.entries(set).filter(([k, v]) => v && !supported.includes(k)).map(([k]) => FILTER_LABELS[k]);
@@ -176,16 +169,6 @@ function Filters({ supported, f, setF, options, scoped }) {
       {has('group') && groups.length > 0 && (
         <Select icon={Layers} value={f.groupId} onChange={(v) => set({ groupId: v })} placeholder="Groupe de cartes"
           options={groups.map((g) => ({ value: g.id, label: f.holder ? g.name : `${g.holderName} · ${g.name}` }))} />
-      )}
-      {has('vehicle') && (options?.vehicles || []).length > 0 && (
-        <Select icon={CarFront} value={f.vehicleId} onChange={(v) => set({ vehicleId: v })} placeholder="Tous les véhicules"
-          options={options.vehicles.filter((v) => (!f.holder || v.holderId === f.holder.id) && (!f.groupId || String(v.groupId) === String(f.groupId)))
-            .map((v) => ({ value: v.id, label: v.label ? `${v.plate} · ${v.label}` : v.plate }))} />
-      )}
-      {has('driver') && (options?.drivers || []).length > 0 && (
-        <Select icon={IdCard} value={f.driverId} onChange={(v) => set({ driverId: v })} placeholder="Tous les chauffeurs"
-          options={options.drivers.filter((d) => (!f.holder || d.holderId === f.holder.id) && (!f.groupId || String(d.groupId) === String(f.groupId)))
-            .map((d) => ({ value: d.id, label: d.name }))} />
       )}
       {has('station') && (
         <Select icon={Fuel} value={f.stationId} onChange={(v) => set({ stationId: v })} placeholder={scoped ? undefined : 'Toutes les stations'}

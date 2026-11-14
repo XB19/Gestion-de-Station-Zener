@@ -1,5 +1,5 @@
 -- =====================================================================
--- V11 : historique des prix et commandes fournisseurs (phase 2g, modèle LTStation simplifié)
+-- V9 : historique des prix et commandes fournisseurs (phase 2g, modèle LTStation simplifié)
 --   price_logs              → price_change (ancien / nouveau prix par produit et profil, date d'effet ;
 --                             changement planifié appliqué automatiquement à la date d'effet)
 --   supplier_oil_supply     → supplier (dépôts pétroliers et fournisseurs de la boutique)
