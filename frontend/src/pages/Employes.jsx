@@ -370,7 +370,7 @@ export default function Employes() {
     return () => clearTimeout(t);
   }, [q]);
 
-  const w = month.data?.winner;
+  const w = month.data?.winner?.id ? month.data.winner : null;
   const s = summary.data;
   const close = () => {
     setModal(null);

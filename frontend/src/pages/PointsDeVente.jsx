@@ -412,7 +412,7 @@ export default function PointsDeVente() {
       />
 
       <div className="grid g4 mb20">
-        <Kpi icon={Store} label="Points de vente ouverts" value={s ? s.open : '…'} foot={s ? `${s.openPermanent} permanent · ${s.openTemporary} temporaires` : ''} />
+        <Kpi icon={Store} label="Points de vente ouverts" value={s ? s.open : '…'} foot={s ? `${s.openPermanent} permanent · ${s.openTemporary} temporaire(s) · ${s.openPromotional || 0} promo` : ''} />
         <Kpi icon={CreditCard} tone="green" label="Cartes vendues aujourd’hui" value={s ? num(s.cardsSoldToday) : '…'}
           foot={lastWeek === null ? 'aucune la semaine dernière' : <><Trend value={pct(lastWeek)} down={lastWeek < 0} /> vs même jour la semaine dernière</>} />
         <Kpi icon={HandCoins} tone="navy" label="Encaissé aujourd’hui" value={s ? fcfa(s.cashedToday) : '…'} unit="FCFA"

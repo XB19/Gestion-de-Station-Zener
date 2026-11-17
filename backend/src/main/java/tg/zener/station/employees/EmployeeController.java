@@ -192,7 +192,24 @@ public class EmployeeController {
         } catch (Exception ex) {
             throw new ApiException("Mois invalide (format AAAA-MM)");
         }
-        List<Map<String, Object>> ranking = db.list("""
+        int size = limit == null ? 10 : Math.max(1, Math.min(limit, 100));
+        List<Map<String, Object>> ranking = ranking(ym, station, size);
+        String label = monthLabel(ym);
+        if (ranking.isEmpty() && (month == null || month.isBlank())) {
+            // pas encore d'historique le mois dernier (réseau récent) : classement du mois en cours
+            ym = YearMonth.now();
+            ranking = ranking(ym, station, size);
+            label = monthLabel(ym) + " (en cours)";
+        }
+        for (int i = 0; i < ranking.size(); i++) {
+            ranking.get(i).put("rank", i + 1);
+        }
+        return Map.of("month", ym.toString(), "label", label,
+                "winner", ranking.isEmpty() ? Map.of() : ranking.get(0), "ranking", ranking);
+    }
+
+    private List<Map<String, Object>> ranking(YearMonth ym, Long station, int size) {
+        return db.list("""
                 \sSELECT e.id, e.first_name || ' ' || e.last_name AS name,
                        upper(left(e.first_name, 1) || left(e.last_name, 1)) AS initials,
                        r.label AS role_label, s.name AS station_name,
@@ -209,13 +226,7 @@ public class EmployeeController {
                 GROUP BY e.id, r.label, s.name
                 ORDER BY products_sold DESC, liters DESC, revenue DESC
                 LIMIT :l""",
-                Db.p("from", ym.atDay(1), "to", ym.plusMonths(1).atDay(1), "s", station,
-                        "l", limit == null ? 10 : Math.max(1, Math.min(limit, 100))));
-        for (int i = 0; i < ranking.size(); i++) {
-            ranking.get(i).put("rank", i + 1);
-        }
-        return Map.of("month", ym.toString(), "label", monthLabel(ym),
-                "winner", ranking.isEmpty() ? Map.of() : ranking.get(0), "ranking", ranking);
+                Db.p("from", ym.atDay(1), "to", ym.plusMonths(1).atDay(1), "s", station, "l", size));
     }
 
     static String monthLabel(YearMonth ym) {

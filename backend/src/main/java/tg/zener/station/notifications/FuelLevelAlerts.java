@@ -90,7 +90,7 @@ public class FuelLevelAlerts {
         String title = t.get("productName") + " · " + t.get("shortName") + " : cuve à " + level;
         String body = t.get("stationName") + " · " + t.get("name") + " : " + volume((BigDecimal) t.get("volume")) + " L sur "
                 + volume((BigDecimal) t.get("capacity")) + " L (" + level + ", sous le palier de " + reached + " %)."
-                + (t.get("trendPct") == null ? "" : "\nTendance de consommation sur 7 jours : " + t.get("trendPct") + " %.")
+                + (t.get("trendPct") == null ? "" : "\nTendance de consommation sur 7 jours : " + t.get("trendPct").toString().replace('.', ',') + " %.")
                 + (Notifier.URGENT.equals(priority) || Notifier.CRITIQUE.equals(priority)
                         ? "\nCommande de carburant à passer depuis l'écran Approvisionnement." : "");
         String link = Notifier.URGENT.equals(priority) || Notifier.CRITIQUE.equals(priority)
