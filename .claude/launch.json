@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "frontend",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": [
+        "/c",
+        "set VITE_API_URL=http://localhost:8290&& npm --prefix frontend run dev -- --port 5300 --strictPort"
+      ],
+      "port": 5300
+    },
+    {
+      "name": "frontend-local-api",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": [
+        "/c",
+        "set VITE_API_URL=http://localhost:8091&& npm --prefix frontend run dev -- --port 5175 --strictPort"
+      ],
+      "port": 5175
+    }
+  ]
+}

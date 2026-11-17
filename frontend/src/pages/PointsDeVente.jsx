@@ -2,25 +2,184 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Plus, Store, CreditCard, HandCoins, Clock, CalendarDays, Users, CloudOff, Banknote, Smartphone, Printer, CircleCheck,
-  PackagePlus, BadgePlus,
+  PackagePlus, BadgePlus, Megaphone, RotateCcw, ShoppingBag, Truck, Trash2,
 } from 'lucide-react';
 import { PageHeader, Card, Kpi, Trend, Badge, StatusBadge, Button, Avatar, IcoBox, Async, Empty } from '../components/ui.jsx';
 import { FormModal, Field, TextInput, SelectInput, useToast } from '../components/feedback.jsx';
 import { useApi, useInterval, useLiveReload } from '../api/hooks.js';
-import { fileUrl, post } from '../api/client.js';
+import { fileUrl, post, put } from '../api/client.js';
+import CardPicker from '../components/CardPicker.jsx';
 import { useSession } from '../api/session.jsx';
 import { ago, avatarColor, dayMonth, fcfa, isoDay, money, num, pct } from '../lib/format.js';
+
+const KIND_TONE = { PERMANENT: 'blue', TEMPORAIRE: 'purple', PROMOTIONNEL: 'orange' };
+const KIND_ICON = { PERMANENT: Store, TEMPORAIRE: CalendarDays, PROMOTIONNEL: Megaphone };
 
 function subtitle(p) {
   if (p.kind === 'PERMANENT') return `Permanent · ${p.address || ''}`;
   const period = `${dayMonth(p.startDate)} → ${dayMonth(p.endDate)}`;
-  if (p.status === 'DEMANDE') return `Temporaire · Demande · ${period}`;
-  return `Temporaire · ${period}${p.daysLeft != null && p.daysLeft >= 0 ? ` · J-${p.daysLeft}` : ''}`;
+  const kind = p.kind === 'PROMOTIONNEL' ? `Promotionnel${p.campaign ? ` · ${p.campaign}` : ''}` : 'Temporaire';
+  const session = p.sessionNo > 1 ? ` · session ${p.sessionNo}` : '';
+  if (p.status === 'DEMANDE') return `${kind} · Demande${session} · ${period}`;
+  return `${kind}${session} · ${period}${p.daysLeft != null && p.daysLeft >= 0 ? ` · J-${p.daysLeft}` : ''}`;
+}
+
+/** Réouverture d'un point de vente clos : nouvelle session, à valider par l'Admin ou le DAF. */
+function ReopenModal({ pdv, onClose, onSaved }) {
+  const notify = useToast();
+  const [f, setF] = useState({ startDate: isoDay(), endDate: isoDay(new Date(Date.now() + 5 * 86400000)), reason: '', campaign: pdv.campaign || '', offer: pdv.offer || '' });
+  const set = (k) => (v) => setF((x) => ({ ...x, [k]: v }));
+  return (
+    <FormModal title={`Rouvrir · ${pdv.name}`} submitLabel="Demander la réouverture" onClose={onClose} onSubmit={async () => {
+      await post(`/pdv/${pdv.id}/reopen`, f);
+      notify('Réouverture demandée · à valider par l’Admin ou le DAF', 'info');
+      onSaved();
+    }}>
+      <div className="form-grid">
+        <Field label="Début"><TextInput type="date" value={f.startDate} onChange={set('startDate')} required /></Field>
+        <Field label="Fin"><TextInput type="date" value={f.endDate} onChange={set('endDate')} required /></Field>
+        {pdv.kind === 'PROMOTIONNEL' && <Field label="Campagne"><TextInput value={f.campaign} onChange={set('campaign')} /></Field>}
+        {pdv.kind === 'PROMOTIONNEL' && <Field label="Offre"><TextInput value={f.offer} onChange={set('offer')} /></Field>}
+        <Field label="Motif" full><TextInput value={f.reason} onChange={set('reason')} placeholder="Nouvelle édition, demande du partenaire…" /></Field>
+      </div>
+      <div className="muted" style={{ fontSize: 13, marginTop: 10 }}>La nouvelle session a sa propre validation, son rapprochement et sa clôture ; l'historique des sessions précédentes est conservé.</div>
+    </FormModal>
+  );
+}
+
+/** Produits proposés (lubrifiants, gaz, accessoires, cartes à prix de campagne) et stock sur place. */
+function ProductsCard({ pdv, canManage, canSell, onChanged }) {
+  const notify = useToast();
+  const all = useApi(canManage ? '/products' : null);
+  const stations = useApi(canManage ? '/stations' : null);
+  const [editing, setEditing] = useState(false);
+  const [items, setItems] = useState([]);
+  const [transfer, setTransfer] = useState(null);
+  const [selling, setSelling] = useState(false);
+  const list = pdv.productsList || [];
+  const startEdit = () => {
+    setItems(list.map((p) => ({ productId: p.id, promoPrice: p.promoPrice ?? '' })));
+    setEditing(true);
+  };
+  const save = async () => {
+    try {
+      await put(`/pdv/${pdv.id}/products`, { items: items.filter((i) => i.productId).map((i) => ({ productId: Number(i.productId), promoPrice: i.promoPrice === '' ? null : Number(i.promoPrice) })) });
+      notify('Produits du point de vente enregistrés');
+      setEditing(false);
+      onChanged();
+    } catch (e) {
+      notify(e.message, 'error');
+    }
+  };
+  const choices = (all.data || []).filter((p) => p.active && !['CARBURANT', 'SERVICE'].includes(p.category));
+  return (
+    <Card className="card-pad">
+      <div className="row between">
+        <div className="row" style={{ gap: 8 }}><ShoppingBag size={18} color="var(--primary)" /><span className="card-title">Produits</span></div>
+        <span className="row" style={{ gap: 8 }}>
+          {canSell && pdv.status === 'OUVERT' && list.some((p) => p.category !== 'CARTE') && <Button size="sm" variant="primary" icon={BadgePlus} onClick={() => setSelling(true)}>Vendre des produits</Button>}
+          {canManage && !editing && <Button size="sm" onClick={startEdit}>Modifier la liste</Button>}
+        </span>
+      </div>
+      {editing ? (
+        <div style={{ marginTop: 10 }}>
+          {items.map((it, i) => (
+            <div key={i} className="row" style={{ gap: 8, marginBottom: 6 }}>
+              <label className="input" style={{ flex: 1 }}><select value={it.productId} onChange={(e) => setItems(items.map((x, j) => (j === i ? { ...x, productId: e.target.value } : x)))}>
+                <option value="">Choisir…</option>
+                {choices.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select></label>
+              <label className="input" style={{ width: 150 }}><input type="number" min="0" placeholder="Prix promo (F)" value={it.promoPrice}
+                onChange={(e) => setItems(items.map((x, j) => (j === i ? { ...x, promoPrice: e.target.value } : x)))} /></label>
+              <Button size="sm" icon={Trash2} title="Retirer" onClick={() => setItems(items.filter((_, j) => j !== i))} />
+            </div>
+          ))}
+          <div className="row" style={{ gap: 8, marginTop: 6 }}>
+            <Button size="sm" icon={Plus} onClick={() => setItems([...items, { productId: '', promoPrice: '' }])}>Produit</Button>
+            <Button size="sm" onClick={() => setEditing(false)}>Annuler</Button>
+            <Button size="sm" variant="primary" onClick={save}>Enregistrer</Button>
+          </div>
+        </div>
+      ) : list.length === 0 ? <div className="muted" style={{ marginTop: 10 }}>Cartes neuves uniquement.</div> : (
+        <div className="table-wrap" style={{ marginTop: 8 }}><table className="table">
+          <thead><tr><th>Produit</th><th className="r">Prix</th><th className="r">Stock</th>{canManage && <th />}</tr></thead>
+          <tbody>{list.map((p) => (
+            <tr key={p.id}>
+              <td>{p.name}{p.grade ? <span className="muted"> · {p.grade}</span> : ''}</td>
+              <td className="r num">{p.promoPrice != null ? <><s className="muted">{fcfa(p.price)}</s> <b style={{ color: 'var(--orange)' }}>{fcfa(p.promoPrice)}</b></> : fcfa(p.price)} F</td>
+              <td className="r num">{p.category === 'CARTE' ? '—' : num(p.stock)}</td>
+              {canManage && <td className="r">{p.category !== 'CARTE' && <Button size="sm" icon={Truck} title="Envoyer / retourner du stock" onClick={() => setTransfer(p)} />}</td>}
+            </tr>
+          ))}</tbody>
+        </table></div>
+      )}
+      {transfer && (
+        <FormModal title={`Stock · ${transfer.name}`} submitLabel="Valider le mouvement" onClose={() => setTransfer(null)} onSubmit={async () => {
+          const back = document.getElementById('pdv-tr-dir').value === 'back';
+          await post(`/pdv/${pdv.id}/stock`, { stationId: Number(document.getElementById('pdv-tr-st').value), productId: transfer.id,
+            quantity: Number(document.getElementById('pdv-tr-q').value), back });
+          notify(back ? 'Stock retourné à la station' : 'Stock envoyé au point de vente');
+          onChanged();
+        }}>
+          <div className="form-grid">
+            <Field label="Mouvement"><label className="input"><select id="pdv-tr-dir"><option value="send">Station → point de vente</option><option value="back">Point de vente → station</option></select></label></Field>
+            <Field label="Station"><label className="input"><select id="pdv-tr-st">{(stations.data || []).map((st) => <option key={st.id} value={st.id}>{st.name}</option>)}</select></label></Field>
+            <Field label="Quantité"><label className="input"><input id="pdv-tr-q" type="number" min="1" defaultValue="10" required /></label></Field>
+          </div>
+        </FormModal>
+      )}
+      {selling && <ProductSaleModal pdv={pdv} products={list.filter((p) => p.category !== 'CARTE')} onClose={() => setSelling(false)} onSaved={onChanged} />}
+    </Card>
+  );
+}
+
+/** Vente de produits au point de vente : espèces, mobile money ou carte Zener (avec PIN). */
+function ProductSaleModal({ pdv, products, onClose, onSaved }) {
+  const notify = useToast();
+  const [lines, setLines] = useState([{ productCode: products[0]?.code || '', quantity: '1' }]);
+  const [method, setMethod] = useState('ESPECES');
+  const [ref, setRef] = useState('');
+  const [card, setCard] = useState(null);
+  const [pin, setPin] = useState('');
+  const price = (code) => {
+    const p = products.find((x) => x.code === code);
+    return p ? (p.promoPrice ?? p.price) : 0;
+  };
+  const total = lines.reduce((t, l) => t + price(l.productCode) * (Number(l.quantity) || 0), 0);
+  return (
+    <FormModal title={`Vente de produits · ${pdv.name}`} wide submitLabel={`Encaisser ${money(total)}`} onClose={onClose} onSubmit={async () => {
+      const r = await post(`/pdv/${pdv.id}/product-sales`, {
+        uuid: crypto.randomUUID(), lines: lines.filter((l) => l.productCode && Number(l.quantity) > 0).map((l) => ({ productCode: l.productCode, quantity: Number(l.quantity) })),
+        paymentMethod: method, paymentRef: ref || null, cardNumber: card?.number || null, pin: pin || null,
+      });
+      notify(`Vente enregistrée · ${money(r.total)}`);
+      onSaved();
+    }}>
+      {lines.map((l, i) => (
+        <div key={i} className="row" style={{ gap: 8, marginBottom: 6 }}>
+          <label className="input" style={{ flex: 1 }}><select value={l.productCode} onChange={(e) => setLines(lines.map((x, j) => (j === i ? { ...x, productCode: e.target.value } : x)))}>
+            {products.map((p) => <option key={p.code} value={p.code}>{p.name} · {fcfa(p.promoPrice ?? p.price)} F · stock {num(p.stock)}</option>)}
+          </select></label>
+          <label className="input" style={{ width: 90 }}><input type="number" min="1" value={l.quantity} onChange={(e) => setLines(lines.map((x, j) => (j === i ? { ...x, quantity: e.target.value } : x)))} /></label>
+          {lines.length > 1 && <Button size="sm" icon={Trash2} onClick={() => setLines(lines.filter((_, j) => j !== i))} />}
+        </div>
+      ))}
+      <Button size="sm" icon={Plus} onClick={() => setLines([...lines, { productCode: products[0]?.code || '', quantity: '1' }])}>Ligne</Button>
+      <div className="form-grid" style={{ marginTop: 12 }}>
+        <Field label="Paiement"><SelectInput value={method} onChange={setMethod} options={[{ value: 'ESPECES', label: 'Espèces' }, { value: 'MOBILE_MONEY', label: 'Mobile money' },
+          { value: 'CARTE', label: 'Carte Zener' }]} /></Field>
+        {method === 'MOBILE_MONEY' && <Field label="Référence"><TextInput value={ref} onChange={setRef} required /></Field>}
+        {method === 'CARTE' && <Field label="Carte" full><CardPicker value={card} onChange={setCard} /></Field>}
+        {method === 'CARTE' && <Field label="Code PIN"><TextInput type="password" value={pin} onChange={setPin} required /></Field>}
+      </div>
+    </FormModal>
+  );
 }
 
 function PdvModal({ temporary, onClose, onSaved }) {
   const notify = useToast();
-  const [f, setF] = useState({ name: '', address: '', startDate: isoDay(), endDate: isoDay(new Date(Date.now() + 5 * 86400000)), cardsPlanned: 200, reason: '' });
+  const [f, setF] = useState({ name: '', address: '', startDate: isoDay(), endDate: isoDay(new Date(Date.now() + 5 * 86400000)), cardsPlanned: 200, reason: '',
+    kind: 'TEMPORAIRE', campaign: '', offer: '' });
   const set = (k) => (v) => setF((x) => ({ ...x, [k]: v }));
   return (
     <FormModal
@@ -44,6 +203,12 @@ function PdvModal({ temporary, onClose, onSaved }) {
         <Field label="Adresse" full><TextInput value={f.address} onChange={set('address')} /></Field>
         {temporary && (
           <>
+            <Field label="Type">
+              <SelectInput value={f.kind} onChange={set('kind')} options={[{ value: 'TEMPORAIRE', label: 'Temporaire (événement)' },
+                { value: 'PROMOTIONNEL', label: 'Promotionnel (campagne, partenaire)' }]} />
+            </Field>
+            {f.kind === 'PROMOTIONNEL' && <Field label="Campagne"><TextInput value={f.campaign} onChange={set('campaign')} required placeholder="Campagne partenaire…" /></Field>}
+            {f.kind === 'PROMOTIONNEL' && <Field label="Offre" full><TextInput value={f.offer} onChange={set('offer')} placeholder="Carte classique à 500 F…" /></Field>}
             <Field label="Début"><TextInput type="date" value={f.startDate} onChange={set('startDate')} required /></Field>
             <Field label="Fin"><TextInput type="date" value={f.endDate} onChange={set('endDate')} required /></Field>
           </>
@@ -66,10 +231,10 @@ function AllocateModal({ pdv, onClose, onSaved }) {
       onSaved();
     }}>
       <div className="form-grid">
-        <Field label="Type"><SelectInput value={typeCode} onChange={setTypeCode} options={[{ value: 'CLASSIQUE', label: 'Classique' }, { value: 'VIP', label: 'VIP' }]} /></Field>
+        <Field label="Type"><SelectInput value={typeCode} onChange={setTypeCode} options={[{ value: 'CLASSIQUE', label: 'Classique' }, { value: 'CLUB', label: 'Club' }]} /></Field>
         <Field label="Quantité"><TextInput type="number" min="1" max="2000" value={quantity} onChange={setQuantity} required /></Field>
       </div>
-      <div className="muted" style={{ fontSize: 13, marginTop: 12 }}>Les cartes vierges du stock sont attribuées dans l’ordre des numéros.</div>
+      <div className="muted" style={{ fontSize: 13, marginTop: 12 }}>Seules les cartes activées du stock sont attribuées, dans l’ordre des numéros.</div>
     </FormModal>
   );
 }
@@ -78,7 +243,8 @@ function AllocateModal({ pdv, onClose, onSaved }) {
 function SellModal({ pdv, onClose, onSaved }) {
   const notify = useToast();
   const cards = useApi(`/pdv/${pdv.id}/cards`);
-  const [f, setF] = useState({ cardNumber: '', name: '', idDocType: 'CNI', idDocNumber: '', phone: '', paymentMethod: 'ESPECES', paymentRef: '' });
+  const [f, setF] = useState({ cardNumber: '', name: '', idDocType: 'CNI', idDocNumber: '', phone: '', paymentMethod: 'ESPECES', paymentRef: '', deposit: '200000' });
+  const isClub = (cards.data || []).find((c) => c.number === f.cardNumber)?.typeCode === 'CLUB';
   const set = (k) => (v) => setF((x) => ({ ...x, [k]: v }));
   useEffect(() => {
     if (!f.cardNumber && cards.data?.length) setF((x) => ({ ...x, cardNumber: cards.data[0].number }));
@@ -87,9 +253,9 @@ function SellModal({ pdv, onClose, onSaved }) {
     <FormModal title={`Vendre une carte · ${pdv.name}`} submitLabel="Encaisser et remettre la carte" wide onClose={onClose} onSubmit={async () => {
       const r = await post(`/pdv/${pdv.id}/sales`, {
         uuid: crypto.randomUUID(), cardNumber: f.cardNumber, paymentMethod: f.paymentMethod, paymentRef: f.paymentRef || null,
-        holder: { name: f.name, idDocType: f.idDocType, idDocNumber: f.idDocNumber, phone: f.phone || null },
+        holder: { name: f.name, idDocType: f.idDocType, idDocNumber: f.idDocNumber, phone: f.phone || null }, deposit: isClub ? Number(f.deposit) : null,
       });
-      notify(`Carte vendue · ${money(r.total)} · à activer par la comptabilité`);
+      notify(`Carte vendue et active · ${money(r.total)}${isClub ? ` + dépôt Club ${money(Number(f.deposit))}` : ''}`);
       onSaved();
     }}>
       <div className="form-grid">
@@ -107,6 +273,7 @@ function SellModal({ pdv, onClose, onSaved }) {
           <SelectInput value={f.paymentMethod} onChange={set('paymentMethod')} options={[{ value: 'ESPECES', label: 'Espèces' }, { value: 'MOBILE_MONEY', label: 'Mobile money' }]} />
         </Field>
         {f.paymentMethod === 'MOBILE_MONEY' && <Field label="Référence de la transaction" full><TextInput value={f.paymentRef} onChange={set('paymentRef')} required /></Field>}
+        {isClub && <Field label="Dépôt Club crédité (F)" hint="Carte Club : 200 000 F minimum en plus du prix de la carte"><TextInput type="number" min="200000" value={f.deposit} onChange={set('deposit')} required /></Field>}
       </div>
     </FormModal>
   );
@@ -273,7 +440,7 @@ export default function PointsDeVente() {
                   }}
                 >
                   <div className="row" style={{ gap: 12, alignItems: 'flex-start' }}>
-                    <IcoBox icon={p.kind === 'PERMANENT' ? Store : CalendarDays} tone={p.kind === 'PERMANENT' ? 'blue' : 'purple'} size={34} />
+                    <IcoBox icon={KIND_ICON[p.kind] || CalendarDays} tone={KIND_TONE[p.kind] || 'purple'} size={34} />
                     <div style={{ flex: 1 }}>
                       <div className="strong" style={{ fontSize: 14 }}>{p.name}</div>
                       <div className="muted" style={{ fontSize: 13, marginTop: 3 }}>{subtitle(p)}</div>
@@ -307,11 +474,13 @@ export default function PointsDeVente() {
                       <span className="row" style={{ gap: 8 }}>
                         {p.status === 'OUVERT' && can('PDV_VENDRE') && <Button size="sm" icon={BadgePlus} onClick={() => setModal({ type: 'sell', pdv: p })}>Vendre une carte</Button>}
                         {['OUVERT', 'DEMANDE'].includes(p.status) && can('PDV_GERER') && <Button size="sm" icon={PackagePlus} onClick={() => setModal({ type: 'allocate', pdv: p })}>Attribuer des cartes</Button>}
+                        {p.kind !== 'PERMANENT' && ['CLOS', 'REFUSE'].includes(p.status) && can('PDV_GERER') && <Button size="sm" icon={RotateCcw} onClick={() => setModal({ type: 'reopen', pdv: p })}>Rouvrir</Button>}
                       </span>
                     </div>
                     <div className="row" style={{ gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
-                      <Badge tone={p.kind === 'PERMANENT' ? 'blue' : 'purple'}>{p.kind === 'PERMANENT' ? 'Permanent' : 'Temporaire'}</Badge>
-                      {p.kind === 'TEMPORAIRE' && <span className="muted" style={{ fontSize: 13 }}>{subtitle(p)}</span>}
+                      <Badge tone={KIND_TONE[p.kind]}>{p.kindLabel}</Badge>
+                      {p.kind !== 'PERMANENT' && <span className="muted" style={{ fontSize: 13 }}>{subtitle(p)}</span>}
+                      {p.offer && <Badge tone="orange">{p.offer}</Badge>}
                       {p.validatedBy && <Badge tone="gray">Validé par {p.validatedBy} · {dayMonth(p.validatedAt)}</Badge>}
                       {p.validationStatus === 'EN_ATTENTE' && <Badge tone="orange">Validation {p.validationRef} en attente</Badge>}
                       {p.status === 'OUVERT' && (p.statusLabel === 'Hors ligne'
@@ -325,6 +494,23 @@ export default function PointsDeVente() {
                       <Closure pdv={p} onClosed={reload} />
                     )}
                   </Card>
+
+                  <ProductsCard pdv={p} canManage={can('PDV_GERER')} canSell={can('PDV_VENDRE')} onChanged={reload} />
+
+                  {(p.sessions || []).length > 1 && (
+                    <Card className="card-pad">
+                      <div className="card-title">Sessions</div>
+                      <div className="table-wrap" style={{ marginTop: 8 }}><table className="table">
+                        <thead><tr><th>Session</th><th>Période</th><th>État</th><th className="r">Cartes</th><th className="r">Produits</th><th className="r">Écart</th></tr></thead>
+                        <tbody>{p.sessions.map((x) => (
+                          <tr key={x.sessionNo}><td className="strong">{x.sessionNo}</td><td className="muted">{dayMonth(x.startDate)} → {dayMonth(x.endDate)}</td>
+                            <td>{{ DEMANDE: 'Demandée', OUVERT: 'Ouverte', A_CLOTURER: 'À clôturer', CLOS: 'Close', REFUSE: 'Refusée' }[x.status]}</td>
+                            <td className="r num">{x.cardsSold ?? '—'}</td><td className="r num">{x.productsSoldAmount != null ? fcfa(x.productsSoldAmount) : '—'}</td>
+                            <td className="r num">{x.gap != null ? fcfa(x.gap) : '—'}</td></tr>
+                        ))}</tbody>
+                      </table></div>
+                    </Card>
+                  )}
 
                   <Card className="card-pad">
                     <div className="row between">
@@ -356,6 +542,7 @@ export default function PointsDeVente() {
       {modal?.type === 'pdv' && <PdvModal temporary={modal.temporary} onClose={() => setModal(null)} onSaved={reload} />}
       {modal?.type === 'allocate' && <AllocateModal pdv={modal.pdv} onClose={() => setModal(null)} onSaved={reload} />}
       {modal?.type === 'sell' && <SellModal pdv={modal.pdv} onClose={() => setModal(null)} onSaved={reload} />}
+      {modal?.type === 'reopen' && <ReopenModal pdv={modal.pdv} onClose={() => setModal(null)} onSaved={reload} />}
     </>
   );
 }

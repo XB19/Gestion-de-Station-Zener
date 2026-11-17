@@ -27,8 +27,13 @@ public class StockService {
     private final Mailer mailer;
     private final Journal journal;
     private final LiveFeed live;
+    private final tg.zener.station.notifications.Notifier notifier;
+    private final tg.zener.station.notifications.FuelLevelAlerts fuelLevels;
 
-    public StockService(Db db, Settings settings, Mailer mailer, Journal journal, LiveFeed live) {
+    public StockService(Db db, Settings settings, Mailer mailer, Journal journal, LiveFeed live,
+                        tg.zener.station.notifications.Notifier notifier, tg.zener.station.notifications.FuelLevelAlerts fuelLevels) {
+        this.notifier = notifier;
+        this.fuelLevels = fuelLevels;
         this.db = db;
         this.settings = settings;
         this.mailer = mailer;
@@ -76,6 +81,7 @@ public class StockService {
                 FROM tank t JOIN product p ON p.id = t.product_id JOIN station s ON s.id = t.station_id WHERE t.id = :id""",
                 Db.p("id", tankId));
         evaluate(t, (Number) t.get("stationId"), null, tankId, "L");
+        fuelLevels.check(tankId); // paliers 50 / 40 / 30 / 5 % de la capacité
     }
 
     // ------------------------------------------------------------------ articles
@@ -149,19 +155,17 @@ public class StockService {
                 Db.p("s", station, "pv", pdv, "p", productId, "t", tankId, "l", level, "th", threshold, "sv", severity));
         String where = s.get("productName") + " · " + s.get("shortName");
         String detail = qty(level) + " " + unit + " restants < seuil " + qty(threshold) + " " + unit;
-        List<String> to = new ArrayList<>(settings.getList("alerts.logistics_emails"));
-        if (station != null) {
-            db.list("""
-                    \sSELECT email FROM employee WHERE active AND email IS NOT NULL
-                      AND (id = (SELECT manager_id FROM station WHERE id = :s) OR (station_id = :s AND role_code = 'GERANT'))""",
-                    Db.p("s", station)).forEach(r -> to.add((String) r.get("email")));
-        }
         Object trend = s.get("trendPct");
-        mailer.queue(to, "Alerte de stock " + severity.toLowerCase() + " · " + where,
-                where + " : " + detail + (trend == null ? "" : "\nTendance de consommation sur 7 jours : " + trend + " %")
-                        + "\nPensez à réapprovisionner.", "ALERTE_STOCK");
-        db.update("UPDATE stock_alert SET emailed_at = now() WHERE id = :id", Db.p("id", alertId));
-        journal.logAs(null, "ALERTE_STOCK", Journal.SYSTEME, "Email d'alerte envoyé", where + " · " + detail, null, station, pdv);
+        if (tankId == null) {
+            // articles : notification au gérant (cuves : paliers en % gérés par FuelLevelAlerts)
+            notifier.send(new tg.zener.station.notifications.Notifier.Message("ALERTE_STOCK",
+                    "CRITIQUE".equals(severity) ? tg.zener.station.notifications.Notifier.URGENT : tg.zener.station.notifications.Notifier.ATTENTION,
+                    "Stock " + severity.toLowerCase() + " · " + where,
+                    where + " : " + detail + (trend == null ? "" : "\nTendance de consommation sur 7 jours : " + trend + " %") + "\nPensez à réapprovisionner.",
+                    station != null ? "/ventes-stocks" : "/points-de-vente", station), List.of(), settings.getList("alerts.logistics_emails"));
+            db.update("UPDATE stock_alert SET emailed_at = now() WHERE id = :id", Db.p("id", alertId));
+        }
+        journal.logAs(null, "ALERTE_STOCK", Journal.SYSTEME, "Alerte de stock", where + " · " + detail, null, station, pdv);
         live.publish("alert", station, Map.of("alertId", alertId, "severity", severity, "title", where, "detail", detail));
     }
 

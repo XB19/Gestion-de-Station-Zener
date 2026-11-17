@@ -23,7 +23,10 @@ public class CardOperationsController {
     private final Db db;
     private final CardOperations ops;
 
-    public CardOperationsController(Db db, CardOperations ops) {
+    private final tg.zener.station.validations.SensitiveActions sensitive;
+
+    public CardOperationsController(Db db, CardOperations ops, tg.zener.station.validations.SensitiveActions sensitive) {
+        this.sensitive = sensitive;
         this.db = db;
         this.ops = ops;
     }
@@ -53,6 +56,15 @@ public class CardOperationsController {
     @PreAuthorize("hasAuthority('CARTES_GERER')")
     public Map<String, Object> replace(@PathVariable long id, @Valid @RequestBody ReplaceForm f) {
         return ops.replace(id, f.reason(), blank(f.newNumber()), blank(f.note()), Auth.user().id());
+    }
+
+    public record AdjustForm(long amount, String reason) {}
+
+    /** Ajustement manuel du solde (+ ou −) : appliqué après l'approbation d'une seconde personne (Admin ou DAF). */
+    @PostMapping("/api/cards/{id}/adjust")
+    @PreAuthorize("hasAuthority('CARTES_GERER')")
+    public Map<String, Object> adjust(@PathVariable long id, @RequestBody AdjustForm f) {
+        return sensitive.requestAdjustment(id, f.amount(), f.reason(), Auth.user());
     }
 
     private static String blank(String s) {

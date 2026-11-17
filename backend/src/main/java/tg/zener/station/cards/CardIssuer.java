@@ -11,8 +11,10 @@ import tg.zener.station.common.Db;
 import tg.zener.station.common.Settings;
 
 /**
- * Émission des cartes : numéros, stock de cartes vierges, attribution à un titulaire.
- * Une carte émise est « à activer » : une autre personne doit l'activer (garde-fou anti-fraude).
+ * Émission des cartes. Cycle : lot créé « à activer » (sans titulaire ; « déjà active » si l'activation physique est
+ * faite) → activé ou confirmé par une AUTRE personne → en stock (activée, disponible) → attribuée à un titulaire
+ * (active) ou confiée à un point de vente. Une carte non activée ne s'attribue pas, sauf la création directe d'une
+ * carte nominative (carte employé, remplacement sans carte du stock) qui reste « à activer » par une autre personne.
  */
 @Service
 public class CardIssuer {
@@ -45,9 +47,14 @@ public class CardIssuer {
         return numbers;
     }
 
-    /** Lot de cartes vierges mises en stock. */
+    /** Lot de cartes vierges, « à activer » (activation ou confirmation par une autre personne). */
     @Transactional
     public Map<String, Object> createBatch(String typeCode, String techno, int quantity, Long userId) {
+        return createBatch(typeCode, techno, quantity, false, userId);
+    }
+
+    @Transactional
+    public Map<String, Object> createBatch(String typeCode, String techno, int quantity, boolean alreadyActive, Long userId) {
         if (quantity < 1 || quantity > 5000) {
             throw new ApiException("Quantité entre 1 et 5 000");
         }
@@ -57,9 +64,10 @@ public class CardIssuer {
                 VALUES (:t, :te, :f, :q, :u)""",
                 Db.p("t", typeCode, "te", techno, "f", numbers.get(0), "q", quantity, "u", userId));
         db.update("""
-                \sINSERT INTO card (number, type_code, techno, status, batch_id, created_by)
-                SELECT n, :t, :te, 'STOCK', :b, :u FROM unnest(CAST(:nums AS text[])) AS n""",
-                Db.p("t", typeCode, "te", techno, "b", batch, "u", userId, "nums", db.array("text", numbers.toArray())));
+                \sINSERT INTO card (number, type_code, techno, status, batch_id, created_by, issued_by, physically_active)
+                SELECT n, :t, :te, 'A_ACTIVER', :b, :u, :u, :pa FROM unnest(CAST(:nums AS text[])) AS n""",
+                Db.p("t", typeCode, "te", techno, "b", batch, "u", userId, "pa", alreadyActive,
+                        "nums", db.array("text", numbers.toArray())));
         return Map.of("batchId", batch, "firstNumber", numbers.get(0), "lastNumber", numbers.get(numbers.size() - 1),
                 "quantity", quantity);
     }
@@ -73,8 +81,11 @@ public class CardIssuer {
         Long cardId;
         if (number != null && !number.isBlank()) {
             String n = CardService.normalize(number);
-            Map<String, Object> c = db.require("SELECT id, status, type_code FROM card WHERE number = :n FOR UPDATE",
+            Map<String, Object> c = db.require("SELECT id, status, type_code, holder_id FROM card WHERE number = :n FOR UPDATE",
                     Db.p("n", n), "Carte introuvable dans le stock");
+            if ("A_ACTIVER".equals(c.get("status")) && c.get("holderId") == null) {
+                throw ApiException.conflict("Cette carte n'est pas encore activée : une autre personne doit l'activer avant l'attribution");
+            }
             if (!"STOCK".equals(c.get("status")) && !"PDV".equals(c.get("status"))) {
                 throw ApiException.conflict("Cette carte est déjà attribuée");
             }
@@ -82,11 +93,21 @@ public class CardIssuer {
                 throw new ApiException("Cette carte du stock est de type " + c.get("typeCode"));
             }
             cardId = ((Number) c.get("id")).longValue();
+            // carte activée du stock : attribuée et active immédiatement
+            db.update("""
+                    \sUPDATE card SET status = 'ACTIVE', holder_id = :h, group_id = :g, attributed_by = :u, attributed_at = now(),
+                           pin_hash = COALESCE(:pin, pin_hash), expires_on = COALESCE(expires_on, current_date + interval '3 years'),
+                           activated_at = COALESCE(activated_at, now())
+                    WHERE id = :id""",
+                    Db.p("id", cardId, "h", holderId, "g", groupId, "u", issuedBy, "pin", pin == null ? null : hashPin(pin)));
+            db.update("INSERT INTO card_permission (card_id, updated_by) VALUES (:c, :u) ON CONFLICT DO NOTHING",
+                    Db.p("c", cardId, "u", issuedBy));
+            return cardId;
         } else {
             String n = nextNumbers(1).get(0);
             cardId = db.insert("""
                     \sINSERT INTO card (number, type_code, techno, status, created_by)
-                    VALUES (:n, :t, COALESCE(:te, 'PUCE'), 'STOCK', :u)""",
+                    VALUES (:n, :t, COALESCE(:te, 'PUCE'), 'A_ACTIVER', :u)""",
                     Db.p("n", n, "t", typeCode, "te", techno, "u", issuedBy));
         }
         db.update("""

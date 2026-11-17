@@ -42,7 +42,7 @@ public class CardController {
             \sSELECT c.id, c.number, c.type_code, ct.label AS type_label, c.techno, c.status,
                    """ + STATUS_LABEL + """
                     \sAS status_label,
-                   c.balance, c.holder_id, h.name AS holder_name, h.kind AS holder_kind, c.group_id, g.name AS group_name,
+                   c.physically_active, c.club_until, c.balance, c.holder_id, h.name AS holder_name, h.kind AS holder_kind, c.group_id, g.name AS group_name,
                    c.vehicle_label, c.expires_on, c.created_at,
                    last_op.label AS last_operation, last_op.at AS last_operation_at
             FROM card c
@@ -66,8 +66,11 @@ public class CardController {
     private final Settings settings;
     private final Journal journal;
     private final CardEvents events;
+    private final ClubService club;
 
-    public CardController(Db db, CardService cards, CardIssuer issuer, Settings settings, Journal journal, CardEvents events) {
+    public CardController(Db db, CardService cards, CardIssuer issuer, Settings settings, Journal journal, CardEvents events,
+                          ClubService club) {
+        this.club = club;
         this.db = db;
         this.cards = cards;
         this.issuer = issuer;
@@ -101,10 +104,11 @@ public class CardController {
                    AND (CAST(:h AS bigint) IS NULL OR c.holder_id = :h)
                    AND (CAST(:st AS text) IS NULL OR c.status = :st)
                    AND (CAST(:te AS text) IS NULL OR c.techno = :te)
-                   AND CASE :tab WHEN 'FLOTTE' THEN c.type_code = 'FLOTTE' AND c.status NOT IN ('STOCK', 'PDV')
-                                 WHEN 'STOCK' THEN c.status IN ('STOCK', 'PDV')
+                   AND CASE :tab WHEN 'FLOTTE' THEN c.type_code = 'FLOTTE' AND c.holder_id IS NOT NULL
+                                 WHEN 'STOCK' THEN c.holder_id IS NULL
                                  WHEN 'A_ACTIVER' THEN c.status = 'A_ACTIVER'
-                                 ELSE c.status NOT IN ('STOCK', 'PDV') END""";
+                                 WHEN 'CLUB' THEN c.type_code = 'CLUB' AND c.holder_id IS NOT NULL
+                                 ELSE c.holder_id IS NOT NULL END""";
         int sz = Page.size(size);
         int pg = Page.page(page);
         Map<String, Object> params = Db.p("q", q == null || q.isBlank() ? null : q.trim(), "type", type, "g", groupId,
@@ -131,11 +135,14 @@ public class CardController {
                        count(*) FILTER (WHERE status = 'PDV') AS at_pdv,
                        count(*) FILTER (WHERE sold_at IS NOT NULL) AS sold,
                        count(*) FILTER (WHERE status = 'A_ACTIVER') AS to_activate,
+                       count(*) FILTER (WHERE status = 'A_ACTIVER' AND holder_id IS NULL) AS stock_to_activate,
+                       count(*) FILTER (WHERE type_code = 'CLUB' AND holder_id IS NOT NULL AND club_until >= current_date) AS club_active,
                        count(*) FILTER (WHERE status = 'BLOQUEE') AS blocked
                 FROM card""", Map.of());
         m.put("stockByType", db.list("""
                 \sSELECT ct.code, ct.label, ct.price, count(c.id) FILTER (WHERE c.status = 'STOCK') AS in_stock,
-                       count(c.id) FILTER (WHERE c.status = 'PDV') AS at_pdv
+                       count(c.id) FILTER (WHERE c.status = 'PDV') AS at_pdv,
+                       count(c.id) FILTER (WHERE c.status = 'A_ACTIVER' AND c.holder_id IS NULL) AS to_activate
                 FROM card_type ct LEFT JOIN card c ON c.type_code = ct.code
                 GROUP BY ct.code, ct.label, ct.price, ct.sort ORDER BY ct.sort"""));
         m.put("types", db.list("SELECT code, label, price, sold_to_public FROM card_type ORDER BY sort"));
@@ -191,6 +198,10 @@ public class CardController {
                 WHERE r.old_card_id = :id OR r.new_card_id = :id ORDER BY r.at DESC LIMIT 1""", Db.p("id", id)));
         Map<String, Object> usage = cards.usage(id);
         c.put("usage", usage);
+        c.put("club", club.summary(id));
+        c.putAll(db.one("""
+                \sSELECT c.physically_active, c.attributed_at, ab.first_name || ' ' || ab.last_name AS attributed_by_name
+                FROM card c LEFT JOIN employee ab ON ab.id = c.attributed_by WHERE c.id = :id""", Db.p("id", id)));
         long threshold = settings.getLong("validation.threshold", 500_000);
         boolean company = "ENTREPRISE".equals(c.get("holderKind"));
         c.put("validation", Map.of("threshold", threshold,
@@ -238,11 +249,15 @@ public class CardController {
                              String idDocType, String idDocNumber, String phone, String email, String address) {}
 
     public record CardForm(Long holderId, @Valid HolderForm holder,
-                           @NotBlank @Pattern(regexp = "CLASSIQUE|VIP|FLOTTE") String typeCode,
+                           @NotBlank @Pattern(regexp = "CLASSIQUE|CLUB|FLOTTE") String typeCode,
                            @Pattern(regexp = "PUCE|M1") String techno, String number, Long groupId,
-                           String vehiclePlate, String vehicleLabel, String driverName, LocalDate expiresOn, String pin) {}
+                           String vehiclePlate, String vehicleLabel, String driverName, LocalDate expiresOn, String pin,
+                           Long deposit, @Pattern(regexp = "ESPECES|MOBILE_MONEY|VIREMENT|CARTE_BANCAIRE") String paymentMethod, String paymentRef) {}
 
-    /** Création d'une carte pour un titulaire (carte du stock ou nouveau numéro) ; elle reste « à activer ». */
+    /**
+     * Attribution d'une carte activée du stock à un titulaire : la carte est active aussitôt. Carte Club : dépôt
+     * initial (club.initial_deposit) crédité sur la carte et adhésion de 12 mois.
+     */
     @PostMapping
     @PreAuthorize("hasAuthority('CARTES_GERER')")
     @Transactional
@@ -257,6 +272,12 @@ public class CardController {
         if ("PARTICULIER".equals(h.get("kind")) && h.get("idDocNumber") == null) {
             throw new ApiException("Pièce d'identité du titulaire requise");
         }
+        if (f.number() == null || f.number().isBlank()) {
+            throw new ApiException("Choisissez une carte activée du stock à attribuer");
+        }
+        if ("CLUB".equals(f.typeCode()) && (f.deposit() == null || f.deposit() < club.initialDeposit())) {
+            throw new ApiException("Carte Club : dépôt initial d'au moins " + ClubService.fmt(club.initialDeposit()) + " F à créditer sur la carte");
+        }
         if (f.groupId() != null && db.count("SELECT count(*) FROM card_group WHERE id = :g AND holder_id = :h",
                 Db.p("g", f.groupId(), "h", holderId)) == 0) {
             throw new ApiException("Ce groupe n'appartient pas au titulaire");
@@ -266,11 +287,35 @@ public class CardController {
                 \sUPDATE card SET vehicle_plate = :vp, vehicle_label = :vl, driver_name = :d,
                        expires_on = COALESCE(:e, expires_on) WHERE id = :id""",
                 Db.p("id", id, "vp", f.vehiclePlate(), "vl", f.vehicleLabel(), "d", f.driverName(), "e", f.expiresOn()));
+        events.record(id, "ATTRIBUTION", h.get("name") + "", u.stationId(), null);
+        if ("CLUB".equals(f.typeCode())) {
+            club.join(id, f.deposit(), f.paymentMethod(), f.paymentRef(), u, u.stationId(), null);
+        }
         Map<String, Object> c = get(id);
-        events.record(id, CardEvents.EMISSION, c.get("typeLabel") + " · " + h.get("name"), u.stationId(), null);
-        journal.log("CARTE_CREEE", Journal.VENTES_CARTES, "Carte créée · à activer",
-                CardService.mask((String) c.get("number")) + " · " + h.get("name"), null, u.stationId(), null);
+        journal.log("CARTE_ATTRIBUEE", Journal.VENTES_CARTES, "Carte attribuée",
+                CardService.mask((String) c.get("number")) + " · " + c.get("typeLabel") + " · " + h.get("name"), null, u.stationId(), null);
         return c;
+    }
+
+    public record RenewForm(@Pattern(regexp = "ESPECES|MOBILE_MONEY|VIREMENT|CARTE_BANCAIRE") String paymentMethod, String paymentRef) {}
+
+    /** Renouvellement payé d'une carte Club (frais club.renewal_fee). */
+    @PostMapping("/{id}/club/renew")
+    @PreAuthorize("hasAuthority('CARTES_GERER') or hasAuthority('RECHARGER')")
+    public Map<String, Object> renewClub(@PathVariable long id, @RequestBody(required = false) RenewForm f) {
+        club.renew(id, f == null ? null : f.paymentMethod(), f == null ? null : f.paymentRef(), Auth.user());
+        return get(id);
+    }
+
+    public record ClubJoinForm(long deposit, @Pattern(regexp = "ESPECES|MOBILE_MONEY|VIREMENT|CARTE_BANCAIRE") String paymentMethod,
+                               String paymentRef) {}
+
+    /** Adhésion Club d'une carte Club déjà active (carte attribuée sans adhésion, ancienne carte VIP…). */
+    @PostMapping("/{id}/club/join")
+    @PreAuthorize("hasAuthority('CARTES_GERER') or hasAuthority('RECHARGER')")
+    public Map<String, Object> joinClub(@PathVariable long id, @RequestBody ClubJoinForm f) {
+        club.join(id, f.deposit(), f.paymentMethod(), f.paymentRef(), Auth.user(), Auth.user().stationId(), null);
+        return get(id);
     }
 
     long createHolder(HolderForm f) {
@@ -284,25 +329,51 @@ public class CardController {
                         "ph", f.phone(), "e", f.email(), "a", f.address()));
     }
 
-    public record BatchForm(@NotBlank @Pattern(regexp = "CLASSIQUE|VIP|FLOTTE|EMPLOYE") String typeCode,
-                            @NotBlank @Pattern(regexp = "PUCE|M1") String techno, @Min(1) @Max(5000) int quantity) {}
+    public record BatchForm(@NotBlank @Pattern(regexp = "CLASSIQUE|CLUB|FLOTTE|EMPLOYE") String typeCode,
+                            @NotBlank @Pattern(regexp = "PUCE|M1") String techno, @Min(1) @Max(5000) int quantity, Boolean alreadyActive) {}
 
-    /** Commande d'un lot de cartes vierges numérotées (mises en stock). */
+    /**
+     * Lot de cartes numérotées : « à activer » ; alreadyActive = l'activation physique est déjà faite (l'activation dans
+     * l'application, par une autre personne, la confirme).
+     */
     @PostMapping("/batches")
     @PreAuthorize("hasAuthority('CARTES_GERER')")
     public Map<String, Object> createBatch(@Valid @RequestBody BatchForm f) {
-        Map<String, Object> r = issuer.createBatch(f.typeCode(), f.techno(), f.quantity(), Auth.user().id());
-        journal.log("STOCK_CARTES", Journal.MODIFICATIONS, "Lot de cartes vierges créé",
-                f.quantity() + " cartes " + f.typeCode().toLowerCase() + " · " + CardService.format((String) r.get("firstNumber"))
-                        + " → " + CardService.format((String) r.get("lastNumber")), null, null, null);
+        boolean active = Boolean.TRUE.equals(f.alreadyActive());
+        Map<String, Object> r = issuer.createBatch(f.typeCode(), f.techno(), f.quantity(), active, Auth.user().id());
+        journal.log("STOCK_CARTES", Journal.MODIFICATIONS, "Lot de cartes créé · à " + (active ? "confirmer" : "activer"),
+                f.quantity() + " cartes " + f.typeCode().toLowerCase() + (active ? " (déjà actives)" : "") + " · "
+                        + CardService.format((String) r.get("firstNumber")) + " → " + CardService.format((String) r.get("lastNumber")),
+                null, null, null);
         return r;
+    }
+
+    /** Activation (ou confirmation) d'un lot entier par une autre personne que celle qui l'a créé. */
+    @PostMapping("/batches/{id}/activate")
+    @PreAuthorize("hasAuthority('CARTES_ACTIVER')")
+    @Transactional
+    public Map<String, Object> activateBatch(@PathVariable long id) {
+        CurrentUser u = Auth.user();
+        Map<String, Object> b = db.require("SELECT id, type_code, created_by FROM card_batch WHERE id = :id", Db.p("id", id), "Lot introuvable");
+        if (b.get("createdBy") != null && ((Number) b.get("createdBy")).longValue() == u.id()) {
+            throw ApiException.forbidden("Vous avez créé ce lot : une autre personne doit l'activer");
+        }
+        List<Long> ids = db.list("""
+                \sUPDATE card SET status = 'STOCK', activated_by = :u, activated_at = now()
+                WHERE batch_id = :b AND status = 'A_ACTIVER' AND holder_id IS NULL AND issued_by IS DISTINCT FROM :u RETURNING id""",
+                Db.p("b", id, "u", u.id())).stream().map(r -> ((Number) r.get("id")).longValue()).toList();
+        events.recordMany(ids, CardEvents.ACTIVATION, "Activation du lot", u.stationId(), null);
+        journal.log("STOCK_CARTES", Journal.VENTES_CARTES, "Lot de cartes activé", ids.size() + " carte(s) · lot " + id, null, u.stationId(), null);
+        return Map.of("activated", ids.size());
     }
 
     @GetMapping("/batches")
     public List<Map<String, Object>> batches() {
         return db.list("""
-                \sSELECT b.id, b.type_code, b.techno, b.first_number, b.quantity, b.created_at,
-                       e.first_name || ' ' || e.last_name AS created_by_name
+                \sSELECT b.id, b.type_code, b.techno, b.first_number, b.quantity, b.created_at, b.created_by,
+                       e.first_name || ' ' || e.last_name AS created_by_name,
+                       (SELECT count(*) FROM card c WHERE c.batch_id = b.id AND c.status = 'A_ACTIVER' AND c.holder_id IS NULL) AS to_activate,
+                       (SELECT bool_or(c.physically_active) FROM card c WHERE c.batch_id = b.id) AS physically_active
                 FROM card_batch b LEFT JOIN employee e ON e.id = b.created_by ORDER BY b.id DESC LIMIT 100""");
     }
 
@@ -414,14 +485,13 @@ public class CardController {
         if (c.get("issuedBy") != null && ((Number) c.get("issuedBy")).longValue() == u.id()) {
             throw ApiException.forbidden("Vous avez émis cette carte : une autre personne doit l'activer");
         }
-        if (c.get("holderId") == null) {
-            throw new ApiException("La carte n'a pas de titulaire");
-        }
-        db.update("UPDATE card SET status = 'ACTIVE', activated_by = :u, activated_at = now() WHERE id = :id",
-                Db.p("id", id, "u", u.id()));
-        events.record(id, CardEvents.ACTIVATION, null, u.stationId(), null);
-        journal.log("CARTE_ACTIVEE", Journal.VENTES_CARTES, "Carte activée", CardService.mask((String) c.get("number")),
-                null, u.stationId(), null);
+        // sans titulaire : carte du stock, activée et disponible pour l'attribution
+        boolean stock = c.get("holderId") == null;
+        db.update("UPDATE card SET status = :s, activated_by = :u, activated_at = now() WHERE id = :id",
+                Db.p("id", id, "u", u.id(), "s", stock ? "STOCK" : "ACTIVE"));
+        events.record(id, CardEvents.ACTIVATION, stock ? "En stock · prête à attribuer" : null, u.stationId(), null);
+        journal.log("CARTE_ACTIVEE", Journal.VENTES_CARTES, stock ? "Carte du stock activée" : "Carte activée",
+                CardService.mask((String) c.get("number")), null, u.stationId(), null);
         return get(id);
     }
 

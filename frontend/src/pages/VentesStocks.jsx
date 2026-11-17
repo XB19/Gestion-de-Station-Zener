@@ -25,7 +25,51 @@ const CATEGORY_ICON = { CARBURANT: Fuel, LUBRIFIANT: Droplet, GAZ: Flame, ACCESS
 const LEVEL_COLOR = { Critique: '#e5484d', Bas: '#f29e1f', Normal: '#5aa935' };
 const PROFILES = [
   ['GRAND_PUBLIC', 'Grand public'], ['EMPLOYE_STATION', 'Employé station'], ['EMPLOYE_GROUPE', 'Employé groupe'], ['PARTENAIRE', 'Partenaire'],
+  ['CLUB', 'Club'],
 ];
+const LUB_TYPES = [
+  ['MOTEUR_4T', 'Huile moteur 4 temps'], ['MOTEUR_2T', 'Huile 2 temps'], ['DIESEL', 'Huile diesel / poids lourds'], ['BOITE_PONT', 'Boîte et pont'],
+  ['HYDRAULIQUE', 'Hydraulique'], ['FREIN', 'Liquide de frein'], ['REFROIDISSEMENT', 'Refroidissement'], ['GRAISSE', 'Graisse'], ['AUTRE', 'Autre'],
+];
+
+/** Nouveau produit (lubrifiant : type, grade, marque, conditionnement) ou modification. */
+function ProductModal({ product, onClose, onSaved }) {
+  const notify = useToast();
+  const p = product || {};
+  const [f, setF] = useState({
+    code: p.code || '', name: p.name || '', category: p.category || 'LUBRIFIANT', unit: p.unit || 'unité', publicPrice: p.prices?.GRAND_PUBLIC ?? '',
+    subcategory: p.subcategory || 'MOTEUR_4T', grade: p.grade || '', brand: p.brand || 'Zener', packSize: p.packSize ?? '', packUnit: p.packUnit || 'L',
+    active: p.active ?? true,
+  });
+  const set = (k) => (v) => setF((x) => ({ ...x, [k]: v }));
+  const lub = f.category === 'LUBRIFIANT';
+  return (
+    <FormModal title={product ? `Produit · ${product.name}` : 'Nouveau produit'} wide onClose={onClose} onSubmit={async () => {
+      const body = { ...f, publicPrice: Number(f.publicPrice || 0), packSize: f.packSize === '' ? null : Number(f.packSize),
+        subcategory: lub ? f.subcategory : null, grade: lub ? f.grade || null : null };
+      if (product) await put(`/products/${product.id}`, body);
+      else await post('/products', body);
+      notify(product ? 'Produit modifié' : 'Produit créé · prix identique pour tous les profils, à ajuster');
+      onSaved();
+    }}>
+      <div className="form-grid">
+        <Field label="Code"><TextInput value={f.code} onChange={set('code')} required disabled={!!product} placeholder="HUILE_10W40_4L" /></Field>
+        <Field label="Catégorie"><SelectInput value={f.category} onChange={set('category')} options={[{ value: 'LUBRIFIANT', label: 'Lubrifiant' },
+          { value: 'ACCESSOIRE', label: 'Accessoire' }, { value: 'GAZ', label: 'Gaz' }]} /></Field>
+        <Field label="Désignation" full><TextInput value={f.name} onChange={set('name')} required placeholder="Huile moteur 10W40 · 4 L" /></Field>
+        {lub && <Field label="Type de lubrifiant"><SelectInput value={f.subcategory} onChange={set('subcategory')} options={LUB_TYPES.map(([value, label]) => ({ value, label }))} /></Field>}
+        {lub && <Field label="Grade / viscosité"><TextInput value={f.grade} onChange={set('grade')} placeholder="15W40, SAE 90, DOT 4…" /></Field>}
+        <Field label="Marque"><TextInput value={f.brand} onChange={set('brand')} /></Field>
+        <Field label="Contenance"><TextInput type="number" min="0" step="0.5" value={f.packSize} onChange={set('packSize')} /></Field>
+        <Field label="Unité de contenance"><SelectInput value={f.packUnit} onChange={set('packUnit')} options={['L', 'kg', 'ml', 'g']} /></Field>
+        <Field label="Unité de vente"><SelectInput value={f.unit} onChange={set('unit')} options={['unité', 'pot', 'fût', 'carton']} /></Field>
+        {!product && <Field label="Prix grand public (F)"><TextInput type="number" min="0" value={f.publicPrice} onChange={set('publicPrice')} required /></Field>}
+        {product && <Field label="État"><SelectInput value={f.active ? 'oui' : 'non'} onChange={(v) => set('active')(v === 'oui')}
+          options={[{ value: 'oui', label: 'En vente' }, { value: 'non', label: 'Retiré de la vente' }]} /></Field>}
+      </div>
+    </FormModal>
+  );
+}
 const KIND_LABELS = { CARBURANT: 'Carburant', BOUTIQUE: 'Boutique', ECHANGE_GAZ: 'Échange gaz', CARTE: 'Carte' };
 
 function PricesModal({ products, onClose, onSaved }) {
@@ -272,7 +316,10 @@ export default function VentesStocks() {
               <div className="card-title">Prix par profil d’acheteur</div>
               <div className="card-sub">FCFA TTC · appliqués automatiquement selon le profil</div>
             </div>
-            {can('PRIX') && <Button size="sm" icon={Pencil} disabled={!shown.length} onClick={() => setModal('prices')}>Modifier les prix</Button>}
+            <span className="row" style={{ gap: 8 }}>
+              {can('PRIX') && <Button size="sm" icon={Plus} onClick={() => setModal({ type: 'product' })}>Produit</Button>}
+              {can('PRIX') && <Button size="sm" icon={Pencil} disabled={!shown.length} onClick={() => setModal('prices')}>Modifier les prix</Button>}
+            </span>
           </div>
           <Async state={prices}>
             {() => (shown.length === 0 ? <Empty>Aucun produit</Empty> : (
@@ -286,7 +333,15 @@ export default function VentesStocks() {
                       <td>
                         <div className="row" style={{ gap: 12 }}>
                           <IcoBox icon={CATEGORY_ICON[p.category] || Package} tone="gray" size={30} />
-                          <span className="strong">{p.name}</span>
+                          <span>
+                            <span className="strong">{p.name}</span>
+                            {(p.subcategoryLabel || p.grade || p.brand) && (
+                              <span className="muted" style={{ display: 'block', fontSize: 12 }}>{[p.subcategoryLabel, p.grade, p.brand].filter(Boolean).join(' · ')}</span>
+                            )}
+                          </span>
+                          {can('PRIX') && p.category !== 'CARTE' && p.category !== 'CARBURANT' && (
+                            <button className="link-more" title="Modifier le produit" onClick={() => setModal({ type: 'product', product: p })}><Pencil size={14} /></button>
+                          )}
                         </div>
                       </td>
                       {PROFILES.map(([profile], i) => (
@@ -424,6 +479,7 @@ export default function VentesStocks() {
       )}
 
       {modal === 'prices' && <PricesModal products={shown} onClose={() => setModal(null)} onSaved={prices.reload} />}
+      {modal?.type === 'product' && <ProductModal product={modal.product} onClose={() => setModal(null)} onSaved={prices.reload} />}
       {(modal === 'sale' || modal === 'exchange') && (
         <SaleModal exchange={modal === 'exchange'} stations={stations.data} products={products} onClose={() => setModal(null)} onSaved={reload} />
       )}

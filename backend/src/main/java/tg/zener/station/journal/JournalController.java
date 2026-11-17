@@ -23,7 +23,8 @@ public class JournalController {
 
     public static final String SELECT = """
             \sSELECT o.id, o.at, o.type, o.category, o.title, o.detail, o.amount,
-                   o.station_id, o.pdv_id, o.actor_id,
+                   o.station_id, o.pdv_id, o.actor_id, o.ip, o.user_agent, o.reason,
+                   (o.before_value IS NOT NULL OR o.after_value IS NOT NULL) AS has_changes,
                    CASE WHEN e.id IS NULL THEN 'Système' ELSE e.first_name || ' ' || e.last_name END AS actor_name,
                    CASE WHEN e.id IS NULL THEN NULL
                         ELSE upper(left(e.first_name, 1) || left(e.last_name, 1)) END AS actor_initials,

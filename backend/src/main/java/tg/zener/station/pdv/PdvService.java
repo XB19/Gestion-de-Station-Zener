@@ -31,15 +31,23 @@ public class PdvService {
 
     public record Holder(String name, String idDocType, String idDocNumber, String phone, String email) {}
 
-    public record CardSale(UUID uuid, String cardNumber, Holder holder, String paymentMethod, String paymentRef, Instant at) {}
+    public record CardSale(UUID uuid, String cardNumber, Holder holder, String paymentMethod, String paymentRef, Instant at, Long deposit) {
+
+        public CardSale(UUID uuid, String cardNumber, Holder holder, String paymentMethod, String paymentRef, Instant at) {
+            this(uuid, cardNumber, holder, paymentMethod, paymentRef, at, null);
+        }
+    }
 
     private final Db db;
     private final CardIssuer issuer;
     private final SaleService sales;
     private final Journal journal;
     private final CardEvents cardEvents;
+    private final tg.zener.station.cards.ClubService club;
 
-    public PdvService(Db db, CardIssuer issuer, SaleService sales, Journal journal, CardEvents cardEvents) {
+    public PdvService(Db db, CardIssuer issuer, SaleService sales, Journal journal, CardEvents cardEvents,
+                      tg.zener.station.cards.ClubService club) {
+        this.club = club;
         this.db = db;
         this.issuer = issuer;
         this.sales = sales;
@@ -86,6 +94,10 @@ public class PdvService {
         if (!"PDV".equals(card.get("status")) || card.get("pdvId") == null || ((Number) card.get("pdvId")).longValue() != pdvId) {
             throw ApiException.conflict("Cette carte n'est pas disponible dans ce point de vente");
         }
+        if ("CLUB".equals(card.get("typeCode")) && (s.deposit() == null || s.deposit() < club.initialDeposit())) {
+            throw new ApiException("Carte Club : dépôt initial d'au moins " + tg.zener.station.cards.ClubService.fmt(club.initialDeposit())
+                    + " F à encaisser en plus du prix de la carte");
+        }
         long holderId = db.insert("""
                 \sINSERT INTO holder (kind, name, id_doc_type, id_doc_number, phone, email)
                 VALUES ('PARTICULIER', :n, :dt, :dn, :ph, :e)""",
@@ -108,6 +120,9 @@ public class PdvService {
         cardEvents.recordAs(agent.id(), cardId, CardEvents.VENTE_PDV,
                 ("MOBILE_MONEY".equals(s.paymentMethod()) ? "Mobile money" : "Espèces") + (synced ? " · synchronisée" : ""), null, pdvId);
         db.update("UPDATE pdv SET last_sync_at = now() WHERE id = :p", Db.p("p", pdvId));
+        if ("CLUB".equals(card.get("typeCode"))) {
+            club.join(cardId, s.deposit(), s.paymentMethod(), s.paymentRef(), agent, null, pdvId);
+        }
         return sale;
     }
 
@@ -116,11 +131,18 @@ public class PdvService {
         if (!ValidationService.OUVERTURE_PDV.equals(d.kind()) || d.targetId() == null) {
             return;
         }
-        Map<String, Object> p = db.one("SELECT name FROM pdv WHERE id = :id", Db.p("id", d.targetId()));
-        db.update("UPDATE pdv SET status = :s WHERE id = :id AND status = 'DEMANDE'",
-                Db.p("id", d.targetId(), "s", d.approved() ? "OUVERT" : "REFUSE"));
+        Map<String, Object> p = db.one("SELECT name, session_no FROM pdv WHERE id = :id", Db.p("id", d.targetId()));
+        boolean reopening = p != null && ((Number) p.get("sessionNo")).intValue() > 1;
+        // une réouverture refusée laisse le point de vente clos ; une première ouverture refusée le marque « refusé »
+        db.update("""
+                \sUPDATE pdv SET status = :s, session_started_at = CASE WHEN :ok THEN now() ELSE session_started_at END
+                WHERE id = :id AND status = 'DEMANDE'""",
+                Db.p("id", d.targetId(), "s", d.approved() ? "OUVERT" : reopening ? "CLOS" : "REFUSE", "ok", d.approved()));
+        db.update("""
+                \sUPDATE pdv_session SET status = :s, opened_at = CASE WHEN :ok THEN now() END
+                WHERE validation_id = :v""", Db.p("v", d.requestId(), "s", d.approved() ? "OUVERT" : "REFUSE", "ok", d.approved()));
         journal.logAs(d.deciderId(), "PDV_DECISION", Journal.VALIDATIONS,
-                d.approved() ? "Ouverture de point de vente validée" : "Ouverture de point de vente refusée",
+                (reopening ? "Réouverture" : "Ouverture") + " de point de vente " + (d.approved() ? "validée" : "refusée"),
                 p == null ? null : (String) p.get("name"), null, null, d.targetId());
     }
 
@@ -129,7 +151,7 @@ public class PdvService {
     public void expire() {
         for (Map<String, Object> p : db.list("""
                 \sUPDATE pdv SET status = 'A_CLOTURER'
-                WHERE kind = 'TEMPORAIRE' AND status = 'OUVERT' AND end_date < current_date RETURNING id, name""")) {
+                WHERE kind <> 'PERMANENT' AND status = 'OUVERT' AND end_date < current_date RETURNING id, name""")) {
             journal.logAs(null, "PDV_FIN", Journal.SYSTEME, "Point de vente à clôturer", (String) p.get("name"), null, null,
                     ((Number) p.get("id")).longValue());
         }

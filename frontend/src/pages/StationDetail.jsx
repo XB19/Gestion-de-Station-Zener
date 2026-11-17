@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   ChevronRight, ArrowLeftRight, Pencil, FileText, Plus, Users, CreditCard, Check, MapPin, Fuel, Cpu, Cable,
-  TriangleAlert, Sparkles, Trash2,
+  TriangleAlert, Sparkles, Trash2, Handshake, CheckCircle2, Circle, Rocket,
 } from 'lucide-react';
 import { PageHeader, Card, Badge, StatusBadge, Button, Toggle, KV, Avatar, Async, Empty } from '../components/ui.jsx';
 import { GroupedBars, hourlyBars } from '../components/charts.jsx';
@@ -285,6 +285,124 @@ function ShiftConfigs({ station, editable, onChanged }) {
   );
 }
 
+const FEE_KIND = { LOYER_FIXE: 'Loyer fixe mensuel', COMMISSION_LITRE: 'Commission par litre', POURCENTAGE_CA: 'Part du chiffre d’affaires', MIXTE: 'Loyer + commission' };
+
+function ConcessionModal({ station, onClose, onSaved }) {
+  const notify = useToast();
+  const c = station.concession || {};
+  const [f, setF] = useState({
+    operatorName: c.operatorName || '', operatorCompany: c.operatorCompany || '', operatorPhone: c.operatorPhone || '', operatorEmail: c.operatorEmail || '',
+    operatorIdDoc: c.operatorIdDoc || '', operatorAddress: c.operatorAddress || '', contractRef: c.contractRef || '', contractStart: c.contractStart || '',
+    contractEnd: c.contractEnd || '', feeKind: c.feeKind || 'LOYER_FIXE', feeAmount: c.feeAmount ?? '', commissionPerLiter: c.commissionPerLiter ?? '',
+    revenuePct: c.revenuePct ?? '', depositAmount: c.depositAmount ?? '', equipmentZener: c.equipmentZener || '', equipmentOperator: c.equipmentOperator || '',
+    staffByOperator: c.staffByOperator ?? true, note: c.note || '', reason: '',
+  });
+  const set = (k) => (v) => setF((x) => ({ ...x, [k]: v }));
+  const n = (v) => (v === '' || v == null ? null : Number(v));
+  return (
+    <FormModal title={`Exploitant · ${station.shortName}`} wide onClose={onClose} onSubmit={async () => {
+      await put(`/stations/${station.id}/concession`, { ...f, contractStart: f.contractStart || null, contractEnd: f.contractEnd || null,
+        feeAmount: n(f.feeAmount), commissionPerLiter: n(f.commissionPerLiter), revenuePct: n(f.revenuePct), depositAmount: n(f.depositAmount) });
+      notify('Exploitant et contrat enregistrés');
+      onSaved();
+    }}>
+      <div className="form-grid">
+        <Field label="Exploitant (personne)"><TextInput value={f.operatorName} onChange={set('operatorName')} required /></Field>
+        <Field label="Société"><TextInput value={f.operatorCompany} onChange={set('operatorCompany')} /></Field>
+        <Field label="Téléphone"><TextInput value={f.operatorPhone} onChange={set('operatorPhone')} /></Field>
+        <Field label="Email"><TextInput type="email" value={f.operatorEmail} onChange={set('operatorEmail')} /></Field>
+        <Field label="Pièce / RCCM"><TextInput value={f.operatorIdDoc} onChange={set('operatorIdDoc')} /></Field>
+        <Field label="Adresse"><TextInput value={f.operatorAddress} onChange={set('operatorAddress')} /></Field>
+        <Field label="Référence du contrat"><TextInput value={f.contractRef} onChange={set('contractRef')} /></Field>
+        <Field label="Rémunération de Zener">
+          <SelectInput value={f.feeKind} onChange={set('feeKind')} options={Object.entries(FEE_KIND).map(([value, label]) => ({ value, label }))} />
+        </Field>
+        <Field label="Début du contrat"><TextInput type="date" value={f.contractStart} onChange={set('contractStart')} /></Field>
+        <Field label="Fin du contrat" hint="Rappels à 60, 30 et 7 jours"><TextInput type="date" value={f.contractEnd} onChange={set('contractEnd')} /></Field>
+        <Field label="Loyer mensuel (F)"><TextInput type="number" min="0" value={f.feeAmount} onChange={set('feeAmount')} /></Field>
+        <Field label="Commission (F par litre)"><TextInput type="number" min="0" step="0.5" value={f.commissionPerLiter} onChange={set('commissionPerLiter')} /></Field>
+        <Field label="Part du CA (%)"><TextInput type="number" min="0" step="0.1" value={f.revenuePct} onChange={set('revenuePct')} /></Field>
+        <Field label="Caution versée (F)"><TextInput type="number" min="0" value={f.depositAmount} onChange={set('depositAmount')} /></Field>
+        <Field label="Équipements fournis par Zener" full><TextInput value={f.equipmentZener} onChange={set('equipmentZener')} placeholder="Cuves, pistolets, hub, lecteur…" /></Field>
+        <Field label="Équipements de l'exploitant" full><TextInput value={f.equipmentOperator} onChange={set('equipmentOperator')} /></Field>
+        <Field label="Personnel">
+          <SelectInput value={f.staffByOperator ? 'oui' : 'non'} onChange={(v) => set('staffByOperator')(v === 'oui')}
+            options={[{ value: 'oui', label: 'Employé par l’exploitant' }, { value: 'non', label: 'Employé par Zener' }]} />
+        </Field>
+        <Field label="Motif de la modification"><TextInput value={f.reason} onChange={set('reason')} placeholder="Avenant, renouvellement…" /></Field>
+        <Field label="Note" full><TextInput value={f.note} onChange={set('note')} /></Field>
+      </div>
+    </FormModal>
+  );
+}
+
+/** Station en gérance libre : l'exploitant, son contrat et la rémunération de Zener. */
+function Concession({ station, editable, onEdit }) {
+  const c = station.concession;
+  const fee = c && [c.feeAmount ? `${fcfa(c.feeAmount)} F / mois` : null, c.commissionPerLiter ? `${Number(c.commissionPerLiter)} F / L` : null,
+    c.revenuePct ? `${Number(c.revenuePct)} % du CA` : null].filter(Boolean).join(' + ');
+  return (
+    <Card className="card-pad" style={{ borderTop: '3px solid var(--orange)' }}>
+      <div className="row between">
+        <div className="row" style={{ gap: 8 }}><Handshake size={18} color="var(--orange)" /><span className="card-title">Gérance libre · exploitant</span></div>
+        {editable && <Button size="sm" icon={Pencil} onClick={onEdit}>{c ? 'Modifier' : 'Renseigner'}</Button>}
+      </div>
+      {!c ? <div className="muted" style={{ marginTop: 10 }}>Exploitant et contrat non renseignés.</div> : (
+        <div style={{ marginTop: 8 }}>
+          <KV k="Exploitant" v={[c.operatorName, c.operatorCompany].filter(Boolean).join(' · ')} />
+          <KV k="Contact" v={[c.operatorPhone, c.operatorEmail].filter(Boolean).join(' · ') || '—'} />
+          {c.operatorIdDoc && <KV k="Pièce / RCCM" v={c.operatorIdDoc} />}
+          <KV k="Contrat" v={`${c.contractRef || '—'}${c.contractStart ? ` · ${date(c.contractStart)} → ${date(c.contractEnd)}` : ''}`} />
+          {c.contractDaysLeft != null && (
+            <KV k="Échéance" v={<Badge tone={c.contractDaysLeft < 0 ? 'red' : c.contractDaysLeft <= 30 ? 'orange' : 'green'}>
+              {c.contractDaysLeft < 0 ? `Échu depuis ${-c.contractDaysLeft} j` : `${c.contractDaysLeft} jours`}</Badge>} />
+          )}
+          <KV k="Rémunération" v={`${FEE_KIND[c.feeKind] || '—'}${fee ? ` · ${fee}` : ''}`} />
+          {c.depositAmount != null && <KV k="Caution" v={`${fcfa(c.depositAmount)} F`} />}
+          <KV k="Personnel" v={c.staffByOperator ? 'Employé par l’exploitant' : 'Employé par Zener'} />
+          {c.equipmentZener && <KV k="Équipements Zener" v={c.equipmentZener} />}
+          {c.equipmentOperator && <KV k="Équipements exploitant" v={c.equipmentOperator} />}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/** Profil et mise en route de la station. */
+function StationProfile({ station }) {
+  const p = station.profile || {};
+  const ck = station.checklist;
+  return (
+    <Card className="card-pad">
+      <div className="card-title">Profil de la station</div>
+      <div className="grid g2" style={{ gap: 8, marginTop: 10 }}>
+        {[['Pistolets', num(p.pumps)], ['Cuves', `${num(p.tanks)} · ${num(p.fuels)} carburant(s)`], ['Capacité', `${num(p.tankCapacity)} L`],
+          ['Employés', num(p.staff)], ['Recette du mois', `${fcfa(p.revenueMonth)} F`], ['Carburant du mois', `${num(p.litersMonth)} L`]].map(([k, v]) => (
+          <div key={k} style={{ background: 'var(--surface-2)', borderRadius: 8, padding: '8px 10px' }}>
+            <div className="muted" style={{ fontSize: 12 }}>{k}</div><div className="strong num" style={{ fontSize: 14 }}>{v}</div>
+          </div>
+        ))}
+      </div>
+      {ck && (
+        <>
+          <div className="row between" style={{ marginTop: 16 }}>
+            <span className="row" style={{ gap: 6 }}><Rocket size={16} color="var(--primary)" /><span className="strong">Mise en route</span></span>
+            <Badge tone={ck.done === ck.total ? 'green' : 'orange'}>{ck.done} / {ck.total}</Badge>
+          </div>
+          <div style={{ marginTop: 6 }}>
+            {ck.items.map((i) => (
+              <div key={i.key} className="row" style={{ gap: 8, padding: '4px 0', fontSize: 13 }}>
+                {i.done ? <CheckCircle2 size={15} color="var(--green)" /> : <Circle size={15} color="var(--muted-2)" />}
+                <span className={i.done ? 'muted' : ''}>{i.label}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </Card>
+  );
+}
+
 export default function StationDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -363,7 +481,7 @@ export default function StationDetail() {
               tags={
                 <>
                   <StatusBadge status={s.statusLabel} />
-                  <Badge tone="blue">{s.typeLabel}</Badge>
+                  <Badge tone={s.type === 'GERANCE_LIBRE' ? 'orange' : 'blue'}>{s.type === 'GERANCE_LIBRE' ? `Gérance libre${s.concession ? ` · ${s.concession.operatorCompany || s.concession.operatorName}` : ''}` : 'Succursale Zener'}</Badge>
                   <Badge tone="gray">Mode {s.modeLabel.toLowerCase()}</Badge>
                   {s.kind === 'MOBILE' && <Badge tone="purple">Station mobile</Badge>}
                   <span className="row muted" style={{ gap: 6, marginLeft: 6 }}><MapPin size={15} /> {s.address || s.zone} · {s.country}</span>
@@ -545,6 +663,8 @@ export default function StationDetail() {
                   ))}
                 </Card>
 
+                {s.type === 'GERANCE_LIBRE' && <Concession station={s} editable={can('STATIONS_GERER')} onEdit={() => setModal({ type: 'concession' })} />}
+                <StationProfile station={s} />
                 <Card className="card-pad">
                   <div className="row between">
                     <div className="card-title">Informations</div>
@@ -588,6 +708,7 @@ export default function StationDetail() {
             </div>
 
             {modal?.type === 'edit' && <StationFormModal station={s} onClose={() => setModal(null)} onSaved={st.reload} />}
+            {modal?.type === 'concession' && <ConcessionModal station={s} onClose={() => setModal(null)} onSaved={st.reload} />}
             {modal?.type === 'window' && <WindowModal stationId={s.id} window={modal.window} onClose={() => setModal(null)} onSaved={st.reload} />}
             {modal?.type === 'pump' && <PumpModal stationId={s.id} pump={modal.pump} full={can('STATIONS_GERER')} onClose={() => setModal(null)} onSaved={st.reload} />}
             {modal?.type === 'tank' && <TankModal stationId={s.id} tank={modal.tank} onClose={() => setModal(null)} onSaved={st.reload} />}

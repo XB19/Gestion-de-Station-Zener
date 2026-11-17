@@ -12,8 +12,46 @@ const GROUPS = [
   {
     title: 'Validations',
     items: [
-      ['validation.threshold', 'Palier de validation par carte', 'number', 'FCFA · au-dessus, la recharge part en validation'],
-      ['validation.company_needs_daf', 'Cartes entreprises : validation DAF après la Comptable', 'bool'],
+      ['validation.threshold', 'Palier de validation par carte', 'number', 'FCFA · au-dessus, la recharge est validée par le DAF (ou son délégué)'],
+      ['validation.approver_roles', 'Rôles qui valident les montants', 'text', 'codes de rôle séparés par des virgules (DAF par défaut)'],
+    ],
+  },
+  {
+    title: 'Carte Club',
+    items: [
+      ['club.price', 'Prix de la carte Club', 'number', 'FCFA'],
+      ['club.initial_deposit', 'Dépôt initial minimal', 'number', 'FCFA crédités sur la carte à l’adhésion'],
+      ['club.validity_months', 'Durée de l’adhésion', 'number', 'mois'],
+      ['club.auto_renew_spend', 'Consommation donnant un renouvellement d’office', 'number', 'FCFA sur les 12 derniers mois'],
+      ['club.renewal_fee', 'Frais de renouvellement', 'number', 'FCFA'],
+      ['club.grace_days', 'Période de grâce', 'number', 'jours après l’échéance'],
+      ['club.reminder_days', 'Rappels avant l’échéance', 'text', 'jours, ex. 30,7,1'],
+      ['club.daily_limit', 'Plafond journalier par défaut', 'number', 'FCFA'],
+      ['club.monthly_limit', 'Plafond mensuel par défaut', 'number', 'FCFA'],
+      ['card.replacement_fee', 'Frais de remplacement d’une carte', 'number', 'FCFA'],
+    ],
+  },
+  {
+    title: 'Contrôles des soldes et recharges',
+    items: [
+      ['controls.split_count', 'Recharges fractionnées : nombre en 24 h', 'number', 'juste sous le palier'],
+      ['controls.split_ratio', 'Recharges fractionnées : « juste sous le palier » dès', 'number', 'fraction du palier (0,8 = 80 %)', '0.05'],
+      ['controls.atypical_factor', 'Recharge atypique : fois la moyenne', 'number', 'des 90 jours précédents'],
+      ['controls.atypical_min', 'Recharge atypique : à partir de', 'number', 'FCFA'],
+      ['controls.rapid_count', 'Recharges rapprochées : nombre en 24 h', 'number'],
+      ['controls.night_from', 'Recharge de nuit : à partir de', 'time'],
+      ['controls.night_to', 'Recharge de nuit : jusqu’à', 'time'],
+      ['controls.same_operator_count', 'Même opérateur, même carte : recharges en 7 jours', 'number'],
+      ['controls.dormant_balance', 'Solde dormant : à partir de', 'number', 'FCFA'],
+      ['controls.dormant_days', 'Solde dormant : jours sans achat', 'number'],
+      ['controls.accumulation_ratio', 'Accumulation : recharges / dépenses', 'number', 'sur 90 jours'],
+      ['controls.accumulation_min', 'Accumulation : recharges d’au moins', 'number', 'FCFA sur 90 jours'],
+    ],
+  },
+  {
+    title: 'Sécurité',
+    items: [
+      ['security.sensitive_settings', 'Paramètres soumis à une seconde personne', 'text', 'clés séparées par des virgules'],
     ],
   },
   {
@@ -31,6 +69,8 @@ const GROUPS = [
       ['alerts.critical_ratio', 'Alerte critique sous', 'number', 'fraction du seuil (0,6 = 60 %)', '0.05'],
       ['alerts.safety_days', 'Jours de marge du seuil automatique', 'number', 'ajoutés au délai de livraison'],
       ['alerts.logistics_emails', 'Emails de la logistique', 'text', 'séparés par des virgules'],
+      ['alerts.tank_levels', 'Paliers d’alerte des cuves', 'text', '% de la capacité, priorité croissante (ex. 50,40,30,5)'],
+      ['alerts.critical_repeat_hours', 'Rappel sous le dernier palier toutes les', 'number', 'heures, jusqu’à la livraison'],
     ],
   },
   {
@@ -169,8 +209,18 @@ export default function Parametres() {
     setBusy(true);
     try {
       const values = Object.fromEntries(changed.map((k) => [k, String(draft[k])]));
-      settings.setData(await put('/settings', values));
-      notify(`${changed.length} paramètre(s) enregistré(s)`);
+      const sensitiveKeys = String(settings.data['security.sensitive_settings'] || '').split(',').map((x) => x.trim());
+      const sensitive = changed.filter((k) => sensitiveKeys.includes(k));
+      if (sensitive.length) {
+        const reason = window.prompt(`Paramètres financiers (${sensitive.join(', ')}) : une seconde personne doit approuver. Motif :`) || '';
+        if (!reason.trim()) throw new Error('Motif requis pour un paramètre financier');
+        values._reason = reason;
+      }
+      const r = await put('/settings', values);
+      const { _pending: pending, ...rest } = r;
+      settings.setData(rest);
+      if (pending) notify(pending.message, 'info');
+      if (changed.length > sensitive.length) notify(`${changed.length - sensitive.length} paramètre(s) enregistré(s)`);
     } catch (e) {
       notify(e.message, 'error');
     } finally {

@@ -234,6 +234,7 @@ public class DemoSeeder {
                 log.info("Données de démonstration : base déjà remplie, rien à faire");
             }
             avatars.ensureAll();
+        db.update("UPDATE employee SET onboarded_at = COALESCE(onboarded_at, now())", Map.of()); // comptes de démonstration : déjà en service
             cardEvents.backfill();
             demoExtras.ensureBeforeTanks();
             demoTanks.ensure();
@@ -262,6 +263,7 @@ public class DemoSeeder {
         log.info("Données de démonstration créées en {} s · connexion : ama.kpodar@zener.tg / {}",
                 (System.currentTimeMillis() - t0) / 1000, PASSWORD);
         avatars.ensureAll();
+        db.update("UPDATE employee SET onboarded_at = COALESCE(onboarded_at, now())", Map.of()); // comptes de démonstration : déjà en service
         cardEvents.backfill();
         demoExtras.ensureBeforeTanks();
         demoTanks.ensure();
@@ -525,7 +527,12 @@ public class DemoSeeder {
         permissions(c.id, new String[] {"SUPER", "GASOIL"}, 3_000_000L, 25_000_000L, null, new Integer[] {1, 2, 3, 4, 5, 6},
                 LocalTime.of(6, 0), LocalTime.of(20, 0), null, true);
 
-        c = card("601128474410", "VIP", "M1", komi, null, kossi, abla, "ACTIVE", "Komi", 46_000, 150_000, 2, false);
+        c = card("601128474410", "CLUB", "M1", komi, null, kossi, abla, "ACTIVE", "Komi", 46_000, 150_000, 2, false);
+        db.update("UPDATE card SET club_until = current_date + interval '5 months' WHERE number = '601128474410'", Map.of());
+        db.update("""
+                \sINSERT INTO club_membership (card_id, kind, period_start, period_end, fee, deposit, payment_method, employee_id)
+                SELECT id, 'ADHESION', current_date - interval '7 months', current_date + interval '5 months', 10000, 200000, 'ESPECES', :u
+                FROM card WHERE number = '601128474410'""", Db.p("u", kossi));
 
         c = card("601133027782", "FLOTTE", "PUCE", agro, gLiv, kossi, abla, "ACTIVE", "AgroPlus", 42_000, 900_000, 2, true);
         c.fuels = Set.of("GASOIL");
@@ -575,9 +582,16 @@ public class DemoSeeder {
 
         // stock de cartes vierges
         issuer.createBatch("CLASSIQUE", "M1", 600, ama);
-        issuer.createBatch("VIP", "M1", 150, ama);
+        issuer.createBatch("CLUB", "M1", 150, true, ama);
         issuer.createBatch("CLASSIQUE", "PUCE", 200, ama);
         db.update("UPDATE card_batch SET created_at = now() - interval '20 days'", Map.of());
+        // les deux premiers lots ont été activés par la comptabilité (autre personne que l'émetteur) ; le dernier attend
+        Long accountant = people.get("Abla Gbeasor");
+        db.update("""
+                \sUPDATE card SET status = 'STOCK', activated_by = :a, activated_at = now() - interval '19 days'
+                WHERE status = 'A_ACTIVER' AND holder_id IS NULL
+                  AND batch_id IN (SELECT id FROM card_batch WHERE NOT (type_code = 'CLASSIQUE' AND techno = 'PUCE'))""",
+                Db.p("a", accountant));
     }
 
     private long holder(String kind, String name, String profile, String docType, String doc, String phone, String email,
@@ -679,9 +693,9 @@ public class DemoSeeder {
         agent(stand, "Sélom Ahadji", "AGENT");
 
         allocate(siege, "CLASSIQUE", 60, 20);
-        allocate(siege, "VIP", 20, 20);
+        allocate(siege, "CLUB", 20, 20);
         allocate(foire, "CLASSIQUE", 260, 5);
-        allocate(foire, "VIP", 40, 5);
+        allocate(foire, "CLUB", 40, 5);
         allocate(stand, "CLASSIQUE", 60, 2);
     }
 
@@ -697,6 +711,8 @@ public class DemoSeeder {
         long v = validations.create(new ValidationService.NewRequest(ValidationService.OUVERTURE_PDV, name,
                 "Ouverture d'un point de vente temporaire · " + from + " → " + to, null, false, reason, null, id), users.load(req));
         db.update("UPDATE pdv SET validation_id = :v WHERE id = :id", Db.p("id", id, "v", v));
+        db.update("INSERT INTO pdv_session (pdv_id, session_no, start_date, end_date, status, reason, requested_by, validation_id) "
+                + "VALUES (:p, 1, :sd, :ed, 'DEMANDE', :r, :u, :v)", Db.p("p", id, "sd", from, "ed", to, "r", reason, "u", req, "v", v));
         validations.decide(v, true, "Accordé", users.load(decider));
         LocalDateTime asked = from.minusDays(6).atTime(10, 15);
         db.update("UPDATE validation_request SET requested_at = :a, decided_at = :d WHERE id = :v",
@@ -1301,17 +1317,16 @@ public class DemoSeeder {
         CurrentUser essi = users.load(people.get("Essi Lawson"));
         long agoe = station("ST-001").id;
 
-        // historique : approuvée (Comptable puis DAF) et refusée
+        // historique : approuvée et refusée par le DAF
         Map<String, Object> r = rechargeService.recharge(new RechargeService.Request("601133027782", 600_000, "UNITAIRE", "VIREMENT",
                 "VIR-AGRO-2210", agoe, null), kossi);
         long v = validationOf(r);
-        validations.decide(v, true, "Justificatif de virement reçu", abla);
-        validations.decide(v, true, null, daf);
+        validations.decide(v, true, "Justificatif de virement reçu", daf);
         backdate(v, now.minusDays(2).withHour(9).withMinute(12));
         r = rechargeService.recharge(new RechargeService.Request("601122905531", 900_000, "UNITAIRE", "VIREMENT", "VIR-BTP-0918",
                 station("ST-010").id, null), users.load(station("ST-010").manager));
         v = validationOf(r);
-        validations.decide(v, false, "Virement non reçu", abla);
+        validations.decide(v, false, "Virement non reçu", daf);
         backdate(v, now.minusDays(1).withHour(15).withMinute(40));
 
         // en attente
@@ -1319,7 +1334,6 @@ public class DemoSeeder {
         r = rechargeService.recharge(new RechargeService.Request("601128470093", 1_200_000, "UNITAIRE", "VIREMENT", "VIR-TRL-7781",
                 agoe, null), kossi);
         v = validationOf(r);
-        validations.decide(v, true, "Montant conforme au bon de commande", abla);
         backdate(v, now.minusHours(2));
         r = rechargeService.recharge(new RechargeService.Request("601144170028", 2_500_000, "DISTANCE", "VIREMENT", "VIR-LLG-1102",
                 agoe, null), kossi);
@@ -1340,6 +1354,9 @@ public class DemoSeeder {
                 "Ouverture d'un point de vente temporaire · " + from + " → " + from.plusDays(14), null, false,
                 "Rentrée universitaire : cartes étudiants", null, kara), essi);
         db.update("UPDATE pdv SET validation_id = :v WHERE id = :id", Db.p("id", kara, "v", v));
+        db.update("INSERT INTO pdv_session (pdv_id, session_no, start_date, end_date, status, reason, requested_by, validation_id) "
+                + "VALUES (:p, 1, :sd, :ed, 'DEMANDE', 'Rentrée universitaire : cartes étudiants', :u, :v)",
+                Db.p("p", kara, "sd", from, "ed", from.plusDays(14), "u", essi.id(), "v", v));
         backdate(v, now.minusHours(1));
         agent(kara, "Mawuena Kossi", "AGENT");
 

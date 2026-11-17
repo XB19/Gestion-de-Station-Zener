@@ -28,11 +28,13 @@ public class SettingsController {
     private final Db db;
     private final Settings settings;
     private final Journal journal;
+    private final tg.zener.station.validations.SensitiveActions sensitive;
 
-    public SettingsController(Db db, Settings settings, Journal journal) {
+    public SettingsController(Db db, Settings settings, Journal journal, tg.zener.station.validations.SensitiveActions sensitive) {
         this.db = db;
         this.settings = settings;
         this.journal = journal;
+        this.sensitive = sensitive;
     }
 
     @GetMapping
@@ -40,10 +42,15 @@ public class SettingsController {
         return settings.all();
     }
 
-    /** Mise à jour de paramètres existants : { "validation.threshold": "750000", … }. */
+    /**
+     * Mise à jour de paramètres existants : { "validation.threshold": "750000", …, "_reason": "motif" }.
+     * Les paramètres financiers (security.sensitive_settings) ne changent qu'après l'approbation d'une seconde personne.
+     */
     @PutMapping
     @PreAuthorize("hasAuthority('PARAMETRES')")
-    public Map<String, Object> update(@RequestBody Map<String, String> values) {
+    public Map<String, Object> update(@RequestBody Map<String, String> body) {
+        Map<String, String> values = new java.util.LinkedHashMap<>(body);
+        String reason = values.remove("_reason");
         Set<String> known = settings.all().keySet();
         for (var e : values.entrySet()) {
             if (!known.contains(e.getKey())) {
@@ -53,10 +60,26 @@ public class SettingsController {
                 throw new ApiException("Valeur vide pour " + e.getKey());
             }
         }
-        values.forEach(settings::set);
-        journal.log("PARAMETRES", Journal.MODIFICATIONS, "Paramètres modifiés", String.join(", ", values.keySet()),
-                null, null, null);
-        return settings.all();
+        Map<String, String> sensitiveValues = new java.util.LinkedHashMap<>();
+        Map<String, String> direct = new java.util.LinkedHashMap<>();
+        values.forEach((k, v) -> {
+            if (v.equals(settings.get(k, null))) {
+                return;
+            }
+            (sensitive.sensitiveSetting(k) ? sensitiveValues : direct).put(k, v);
+        });
+        if (!direct.isEmpty()) {
+            Map<String, Object> before = new java.util.LinkedHashMap<>();
+            direct.keySet().forEach(k -> before.put(k, settings.get(k, null)));
+            direct.forEach(settings::set);
+            journal.audit("PARAMETRES", Journal.MODIFICATIONS, "Paramètres modifiés", String.join(", ", direct.keySet()), before, direct,
+                    reason, null);
+        }
+        Map<String, Object> out = new java.util.LinkedHashMap<>(settings.all());
+        if (!sensitiveValues.isEmpty()) {
+            out.put("_pending", sensitive.requestSettings(sensitiveValues, reason, tg.zener.station.security.Auth.user()));
+        }
+        return out;
     }
 
     @GetMapping("/holidays")

@@ -67,7 +67,7 @@ public class CardService {
                 : digits.length() == 5 ? "right(c.number, 5) = :q"
                 : "c.number LIKE '%' || :q || '%'";
         List<Map<String, Object>> rows = db.list("""
-                \sSELECT c.id, c.number, c.type_code, ct.label AS type_label, c.status,
+                \sSELECT c.id, c.number, c.type_code, ct.label AS type_label, c.status, c.techno,
                        CASE c.status WHEN 'ACTIVE' THEN 'Active' WHEN 'BLOQUEE' THEN 'Bloquée' WHEN 'INACTIVE' THEN 'Inactive'
                                      WHEN 'A_ACTIVER' THEN 'À activer' WHEN 'PDV' THEN 'Au point de vente' ELSE 'En stock' END AS status_label,
                        c.holder_id, h.name AS holder_name, h.kind AS holder_kind, c.group_id, g.name AS group_name,
@@ -113,7 +113,7 @@ public class CardService {
 
     static final String CARD_SELECT = """
             \sSELECT c.id, c.number, c.type_code, c.techno, c.status, c.balance, c.pin_hash, c.expires_on, c.holder_id,
-                   c.group_id, h.kind AS holder_kind, h.name AS holder_name, h.profile AS holder_profile,
+                   c.group_id, c.club_until, h.kind AS holder_kind, h.name AS holder_name, h.profile AS holder_profile,
                    cp.products, cp.daily_limit, cp.monthly_limit, cp.per_tx_limit, cp.days, cp.time_from, cp.time_to,
                    cp.station_ids, cp.autonomous_allowed, cp.daily_volume_limit, cp.monthly_volume_limit, cp.daily_fills_limit,
                    cp.min_balance

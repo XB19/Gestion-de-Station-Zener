@@ -40,11 +40,14 @@ public class StationController {
     private final StationService stations;
     private final Journal journal;
 
-    public StationController(Db db, StationService stations, Journal journal) {
+    public StationController(Db db, StationService stations, Journal journal, tg.zener.station.notifications.Notifier notifier) {
         this.db = db;
         this.stations = stations;
         this.journal = journal;
+        this.notifier = notifier;
     }
+
+    private final tg.zener.station.notifications.Notifier notifier;
 
     private String baseSelect() {
         return """
@@ -63,8 +66,12 @@ public class StationController {
                        (SELECT p.name FROM stock_alert a JOIN product p ON p.id = a.product_id
                         WHERE a.station_id = s.id AND a.resolved_at IS NULL AND a.tank_id IS NOT NULL
                         ORDER BY a.severity, a.raised_at LIMIT 1) AS low_tank,
-                       CAST(extract(epoch FROM now() - s.last_seen_at) / 60 AS int) AS minutes_since_seen
-                FROM station s LEFT JOIN client c ON c.id = s.client_id""";
+                       CAST(extract(epoch FROM now() - s.last_seen_at) / 60 AS int) AS minutes_since_seen,
+                       sc.operator_name, sc.operator_company, sc.contract_end,
+                       (SELECT count(*) FROM pump pu WHERE pu.station_id = s.id) AS pumps_count,
+                       (SELECT count(*) FROM tank t WHERE t.station_id = s.id) AS tanks_count,
+                       (SELECT count(*) FROM employee e WHERE e.station_id = s.id AND e.active) AS staff_count
+                FROM station s LEFT JOIN client c ON c.id = s.client_id LEFT JOIN station_concession sc ON sc.station_id = s.id""";
     }
 
     /** Ajoute les libellés affichés par le frontend (statut, mode, type, état). */
@@ -122,6 +129,8 @@ public class StationController {
                        count(*) FILTER (WHERE mode = 'AUTONOME' AND auto_switch AND mode_override_until IS NULL
                                         AND EXISTS (SELECT 1 FROM station_mode_window w WHERE w.station_id = x.id)) AS autonomous_by_schedule,
                        count(*) FILTER (WHERE type = 'SUCCURSALE') AS succursales,
+                       COALESCE(sum(revenue_today) FILTER (WHERE type = 'SUCCURSALE'), 0) AS revenue_succursales,
+                       COALESCE(sum(revenue_today) FILTER (WHERE type = 'GERANCE_LIBRE'), 0) AS revenue_gerances,
                        count(*) FILTER (WHERE type = 'GERANCE_LIBRE') AS gerances,
                        count(DISTINCT client_id) FILTER (WHERE type = 'GERANCE_LIBRE') AS manager_clients,
                        COALESCE(sum(revenue_today), 0) AS revenue_today
@@ -142,7 +151,7 @@ public class StationController {
     public List<Map<String, Object>> map(@RequestParam(required = false) String country) {
         Long scope = Auth.scopedStation(null);
         List<Map<String, Object>> rows = db.list("""
-                \sSELECT s.id, s.name, s.short_name, s.kind, s.country, s.latitude, s.longitude, s.reader_connected,
+                \sSELECT s.id, s.name, s.short_name, s.kind, s.type, s.country, s.latitude, s.longitude, s.reader_connected,
                        s.reader_port, """ + stations.statusSql() + """
                         \sAS status,
                        CAST(extract(epoch FROM now() - s.last_seen_at) / 60 AS int) AS minutes_since_seen
@@ -220,7 +229,115 @@ public class StationController {
                                  WHERE y.station_id = :id AND y.at >= current_date AND p.category = 'CARBURANT'), 0) AS volume
                 FROM sale x WHERE x.station_id = :id AND x.at >= current_date""", Db.p("id", id)));
         s.put("litersByHour", litersByHour(id, LocalDate.now()));
+        s.put("concession", db.one("""
+                \sSELECT sc.*, e.first_name || ' ' || e.last_name AS updated_by_name,
+                       (sc.contract_end - current_date) AS contract_days_left
+                FROM station_concession sc LEFT JOIN employee e ON e.id = sc.updated_by WHERE sc.station_id = :id""", Db.p("id", id)));
+        s.put("profile", db.one("""
+                \sSELECT (SELECT count(*) FROM pump WHERE station_id = :id) AS pumps,
+                       (SELECT count(DISTINCT p.product_id) FROM tank p WHERE p.station_id = :id) AS fuels,
+                       (SELECT count(*) FROM tank WHERE station_id = :id) AS tanks,
+                       (SELECT COALESCE(sum(capacity), 0) FROM tank WHERE station_id = :id) AS tank_capacity,
+                       (SELECT count(*) FROM employee WHERE station_id = :id AND active) AS staff,
+                       (SELECT COALESCE(sum(total), 0) FROM sale WHERE station_id = :id AND at >= date_trunc('month', now())) AS revenue_month,
+                       (SELECT COALESCE(sum(sl.quantity), 0) FROM sale_line sl JOIN sale x ON x.id = sl.sale_id JOIN product pr ON pr.id = sl.product_id
+                        WHERE x.station_id = :id AND x.at >= date_trunc('month', now()) AND pr.category = 'CARBURANT') AS liters_month""",
+                Db.p("id", id)));
+        s.put("checklist", checklist(id));
         return s;
+    }
+
+    /** Mise en route d'une station : ce qui est fait et ce qui reste à faire avant l'exploitation. */
+    @GetMapping("/{id}/checklist")
+    public Map<String, Object> checklist(@PathVariable long id) {
+        Auth.checkStation(id);
+        Map<String, Object> c = db.require("""
+                \sSELECT s.type, s.client_id, s.latitude, s.manager_id, s.api_key_hash IS NOT NULL AS has_key, s.last_seen_at IS NOT NULL AS seen,
+                       s.reader_connected,
+                       (SELECT count(*) FROM employee WHERE station_id = s.id AND active) AS staff,
+                       (SELECT count(*) FROM pump WHERE station_id = s.id) AS pumps,
+                       (SELECT count(*) FROM tank WHERE station_id = s.id AND capacity > 0) AS tanks,
+                       (SELECT count(*) FROM shift_config WHERE station_id = s.id) AS shifts,
+                       (SELECT count(*) FROM station_mode_window WHERE station_id = s.id) AS windows,
+                       EXISTS (SELECT 1 FROM station_concession sc WHERE sc.station_id = s.id AND sc.contract_end IS NOT NULL) AS concession
+                FROM station s WHERE s.id = :id""", Db.p("id", id), "Station introuvable");
+        java.util.List<Map<String, Object>> items = new java.util.ArrayList<>();
+        boolean gerance = "GERANCE_LIBRE".equals(c.get("type"));
+        item(items, "CLIENT", "Client (titulaire de la licence) attribué", c.get("clientId") != null, "infos");
+        if (gerance) {
+            item(items, "EXPLOITANT", "Exploitant et contrat de gérance renseignés", Boolean.TRUE.equals(c.get("concession")), "exploitation");
+        }
+        item(items, "POSITION", "Position GPS de la station", c.get("latitude") != null, "infos");
+        item(items, "GERANT", "Gérant nommé", c.get("managerId") != null, "equipe");
+        item(items, "EQUIPE", "Équipe d'au moins 2 personnes", ((Number) c.get("staff")).longValue() >= 2, "equipe");
+        item(items, "CUVES", "Cuves avec leur capacité", ((Number) c.get("tanks")).longValue() > 0, "cuves");
+        item(items, "PISTOLETS", "Pistolets configurés", ((Number) c.get("pumps")).longValue() > 0, "pistolets");
+        item(items, "POSTES", "Postes types (matin, soir, nuit)", ((Number) c.get("shifts")).longValue() > 0, "postes");
+        item(items, "PLAGES", "Plages horaires du mode conventionnel", ((Number) c.get("windows")).longValue() > 0, "mode");
+        item(items, "CLE", "Clé du PC station générée", Boolean.TRUE.equals(c.get("hasKey")), "infos");
+        item(items, "PC", "PC station connecté au moins une fois", Boolean.TRUE.equals(c.get("seen")), "infos");
+        item(items, "LECTEUR", "Lecteur de cartes branché", Boolean.TRUE.equals(c.get("readerConnected")), "infos");
+        long done = items.stream().filter(i -> Boolean.TRUE.equals(i.get("done"))).count();
+        return Map.of("items", items, "done", done, "total", items.size());
+    }
+
+    private static void item(java.util.List<Map<String, Object>> items, String key, String label, boolean done, String section) {
+        items.add(Map.of("key", key, "label", label, "done", done, "section", section));
+    }
+
+    public record ConcessionForm(@NotBlank String operatorName, String operatorCompany, String operatorPhone, String operatorEmail,
+                                 String operatorIdDoc, String operatorAddress, String contractRef, LocalDate contractStart,
+                                 LocalDate contractEnd, @Pattern(regexp = "LOYER_FIXE|COMMISSION_LITRE|POURCENTAGE_CA|MIXTE") String feeKind,
+                                 Long feeAmount, BigDecimal commissionPerLiter, BigDecimal revenuePct, Long depositAmount,
+                                 String equipmentZener, String equipmentOperator, Boolean staffByOperator, String note, String reason) {}
+
+    /** Fiche de l'exploitant d'une station en gérance libre et de son contrat (rappels avant la fin du contrat). */
+    @PutMapping("/{id}/concession")
+    @PreAuthorize("hasAuthority('STATIONS_GERER')")
+    public Map<String, Object> concession(@PathVariable long id, @Valid @RequestBody ConcessionForm f) {
+        Map<String, Object> st = db.require("SELECT name, type FROM station WHERE id = :id", Db.p("id", id), "Station introuvable");
+        if (!"GERANCE_LIBRE".equals(st.get("type"))) {
+            throw new ApiException("Seule une station en gérance libre a un exploitant");
+        }
+        if (f.contractStart() != null && f.contractEnd() != null && f.contractEnd().isBefore(f.contractStart())) {
+            throw new ApiException("La fin du contrat doit suivre son début");
+        }
+        Map<String, Object> before = db.one("SELECT * FROM station_concession WHERE station_id = :id", Db.p("id", id));
+        db.update("""
+                \sINSERT INTO station_concession (station_id, operator_name, operator_company, operator_phone, operator_email, operator_id_doc,
+                                                operator_address, contract_ref, contract_start, contract_end, fee_kind, fee_amount,
+                                                commission_per_liter, revenue_pct, deposit_amount, equipment_zener, equipment_operator,
+                                                staff_by_operator, note, updated_by, updated_at)
+                VALUES (:id, :on, :oc, :op, :oe, :od, :oa, :cr, :cs, :ce, :fk, :fa, :cpl, :rp, :da, :ez, :eo, COALESCE(:sbo, true), :n, :u, now())
+                ON CONFLICT (station_id) DO UPDATE SET operator_name = EXCLUDED.operator_name, operator_company = EXCLUDED.operator_company,
+                    operator_phone = EXCLUDED.operator_phone, operator_email = EXCLUDED.operator_email, operator_id_doc = EXCLUDED.operator_id_doc,
+                    operator_address = EXCLUDED.operator_address, contract_ref = EXCLUDED.contract_ref, contract_start = EXCLUDED.contract_start,
+                    contract_end = EXCLUDED.contract_end, fee_kind = EXCLUDED.fee_kind, fee_amount = EXCLUDED.fee_amount,
+                    commission_per_liter = EXCLUDED.commission_per_liter, revenue_pct = EXCLUDED.revenue_pct, deposit_amount = EXCLUDED.deposit_amount,
+                    equipment_zener = EXCLUDED.equipment_zener, equipment_operator = EXCLUDED.equipment_operator,
+                    staff_by_operator = EXCLUDED.staff_by_operator, note = EXCLUDED.note, updated_by = EXCLUDED.updated_by, updated_at = now()""",
+                Db.p("id", id, "on", f.operatorName().trim(), "oc", blank(f.operatorCompany()), "op", blank(f.operatorPhone()),
+                        "oe", blank(f.operatorEmail()), "od", blank(f.operatorIdDoc()), "oa", blank(f.operatorAddress()), "cr", blank(f.contractRef()),
+                        "cs", f.contractStart(), "ce", f.contractEnd(), "fk", blank(f.feeKind()), "fa", f.feeAmount(), "cpl", f.commissionPerLiter(),
+                        "rp", f.revenuePct(), "da", f.depositAmount(), "ez", blank(f.equipmentZener()), "eo", blank(f.equipmentOperator()),
+                        "sbo", f.staffByOperator(), "n", blank(f.note()), "u", Auth.user().id()));
+        Map<String, Object> after = db.one("SELECT * FROM station_concession WHERE station_id = :id", Db.p("id", id));
+        journal.audit("GERANCE_LIBRE", Journal.MODIFICATIONS, "Exploitant de la station modifié", st.get("name") + " · " + f.operatorName().trim(),
+                before, after, f.reason(), id);
+        notifier.cancel("CONTRAT", id, "CONTRAT");
+        if (f.contractEnd() != null) {
+            for (int d : new int[] {60, 30, 7}) {
+                LocalDate due = f.contractEnd().minusDays(d);
+                if (!due.isBefore(LocalDate.now())) {
+                    notifier.schedule("CONTRAT", "CONTRAT", id, due, d <= 7 ? tg.zener.station.notifications.Notifier.URGENT
+                                    : tg.zener.station.notifications.Notifier.ATTENTION,
+                            "Contrat de gérance : fin dans " + d + " jours · " + st.get("name"),
+                            "Le contrat de gérance libre de " + f.operatorName().trim() + " se termine le " + f.contractEnd() + ".",
+                            "/stations/" + id, id, java.util.List.of(), java.util.List.of());
+                }
+            }
+        }
+        return get(id);
     }
 
     /** Litres distribués par heure et par carburant : { SUPER: [24 valeurs], GASOIL: […] }. */

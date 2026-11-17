@@ -59,7 +59,12 @@ export function TogoMap({ pins, selected, onSelect, onOpen, height = 560, extra 
           const showName = !LOME(p) || p.shortName?.startsWith('Agoè');
           return (
             <g key={p.id} style={{ cursor: 'pointer' }} onClick={() => onSelect?.(p.id)} onDoubleClick={() => onOpen?.(p.id)}>
-              <circle cx={x} cy={y} r={active ? 8.5 : 6.5} fill="#fff" stroke={active ? '#1b66b8' : '#dfe6ee'} strokeWidth={active ? 2 : 1} />
+              {p.type === 'GERANCE_LIBRE' ? (
+                <rect x={x - (active ? 7.5 : 6)} y={y - (active ? 7.5 : 6)} width={active ? 15 : 12} height={active ? 15 : 12} fill="#fff7ed"
+                  stroke={active ? '#c2410c' : '#f5b27a'} strokeWidth={active ? 2 : 1.4} transform={`rotate(45 ${x} ${y})`} />
+              ) : (
+                <circle cx={x} cy={y} r={active ? 8.5 : 6.5} fill="#fff" stroke={active ? '#1b66b8' : '#9cc0e8'} strokeWidth={active ? 2 : 1.4} />
+              )}
               <circle cx={x} cy={y} r="3.4" fill={PIN_COLOR[p.status] || '#94a3b8'} />
               {showName && (
                 <text x={x + 9} y={y + 3.8} fontSize="10.5" fontWeight="500" fill="#0f172a">
@@ -334,12 +339,18 @@ export default function Stations() {
         <Kpi icon={Wifi} tone="green" label="En ligne" value={s?.online ?? '…'}
           foot={s ? <><Badge tone="red" dot>{s.offline} hors ligne</Badge> {s.unstable ? `· ${s.unstable} instable` : ''}</> : ''} />
         <Kpi icon={ArrowLeftRight} tone="navy" label="Mode autonome" value={s?.autonomous ?? '…'} foot={s ? `dont ${s.autonomousBySchedule} par plage horaire` : ''} />
-        <Kpi icon={Building2} tone="orange" label="Succursales / Gérance" value={s ? `${s.succursales} / ${s.gerances}` : '…'}
-          foot={s ? `${s.managerClients} client${s.managerClients > 1 ? 's' : ''} gérant${s.managerClients > 1 ? 's' : ''}` : ''} />
+        <Kpi icon={Building2} tone="orange" label="Succursales / Gérance libre" value={s ? `${s.succursales} / ${s.gerances}` : '…'}
+          foot={s ? `Recette du jour : ${fcfa(s.revenueSuccursales)} F Zener · ${fcfa(s.revenueGerances)} F gérance` : ''} />
       </div>
 
       <div className="grid split" style={{ gridTemplateColumns: 'minmax(0, 1fr) 400px', alignItems: 'start' }}>
         <Card>
+          <div className="row" style={{ gap: 8, padding: '14px 20px 0', flexWrap: 'wrap' }}>
+            {[['', 'Toutes les stations'], ['SUCCURSALE', 'Succursales Zener'], ['GERANCE_LIBRE', 'Gérance libre']].map(([v, l]) => (
+              <button key={v} type="button" onClick={() => setFilter('type')(v)} className={`badge ${filters.type === v ? (v === 'GERANCE_LIBRE' ? 'orange' : 'blue') : 'gray'}`}
+                style={{ border: 0, height: 30, padding: '0 14px', cursor: 'pointer', fontSize: 13 }}>{l}</button>
+            ))}
+          </div>
           <div className="filters">
             <SearchInput icon={Search} placeholder="Rechercher une station…" style={{ flex: 1, minWidth: 150 }} value={q} onChange={(e) => setQ(e.target.value)} />
             <Select icon={Globe} value={filters.country} onChange={setFilter('country')} placeholder="Pays"
@@ -361,10 +372,13 @@ export default function Stations() {
                     <tr key={st.id} className="tr-click" onClick={() => navigate(`/stations/${st.id}`)} onMouseEnter={() => setSelected(st.id)}>
                       <td>
                         <div className="row" style={{ gap: 12 }}>
-                          <IcoBox icon={Fuel} tone={st.type === 'SUCCURSALE' ? 'blue' : 'purple'} size={34} />
+                          <IcoBox icon={Fuel} tone={st.type === 'SUCCURSALE' ? 'blue' : 'orange'} size={34} />
                           <div>
-                            <div className="cell-title">{st.name}</div>
-                            <div className="cell-sub">{st.typeLabel} · {st.zone}{st.kind === 'MOBILE' ? ' · mobile' : ''}</div>
+                            <div className="cell-title">{st.name} <Badge tone={st.type === 'SUCCURSALE' ? 'blue' : 'orange'}>{st.type === 'SUCCURSALE' ? 'Zener' : 'Gérance libre'}</Badge></div>
+                            <div className="cell-sub">
+                              {st.type === 'GERANCE_LIBRE' && <>{st.operatorCompany || st.operatorName || 'Exploitant non renseigné'} · </>}
+                              {st.zone}{st.kind === 'MOBILE' ? ' · mobile' : ''} · {st.pumpsCount} pistolet(s) · {st.tanksCount} cuve(s) · {st.staffCount} employé(s)
+                            </div>
                           </div>
                         </div>
                       </td>
@@ -399,6 +413,8 @@ export default function Stations() {
             {[['En ligne', '#3f9a2c'], ['Instable', '#f29e1f'], ['Hors ligne', '#e5484d']].map(([l, c]) => (
               <span key={l} className="legend"><i style={{ background: c, borderRadius: '50%' }} /> {l}</span>
             ))}
+            <span className="legend"><i style={{ border: '1.5px solid #9cc0e8', borderRadius: '50%', background: '#fff' }} /> Succursale</span>
+            <span className="legend"><i style={{ border: '1.5px solid #f5b27a', background: '#fff7ed', transform: 'rotate(45deg)' }} /> Gérance libre</span>
             <span className="muted" style={{ marginLeft: 'auto', fontSize: 12.5 }}>Double-clic : ouvrir</span>
           </div>
         </Card>

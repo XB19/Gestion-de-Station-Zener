@@ -42,10 +42,25 @@ public class JwtService {
         this.json = json;
     }
 
+    /** Jeton vérifié : employé et session de connexion (nulle pour un ancien jeton). */
+    public record Token(long employeeId, java.util.UUID sessionId) {}
+
+    /** Durée de validité d'un jeton (« rester connecté » : 7 fois plus longue). */
+    public Instant expiry(boolean remember) {
+        return Instant.now().plus(remember ? ttl.multipliedBy(7) : ttl);
+    }
+
     public String issue(long employeeId, boolean remember) {
+        return issue(employeeId, remember, null);
+    }
+
+    public String issue(long employeeId, boolean remember, java.util.UUID sessionId) {
         Instant now = Instant.now();
         Map<String, Object> claims = new LinkedHashMap<>();
         claims.put("sub", String.valueOf(employeeId));
+        if (sessionId != null) {
+            claims.put("sid", sessionId.toString());
+        }
         claims.put("iat", now.getEpochSecond());
         claims.put("exp", now.plus(remember ? ttl.multipliedBy(7) : ttl).getEpochSecond());
         try {
@@ -59,6 +74,12 @@ public class JwtService {
 
     /** Identifiant de l'employé si le jeton est valide et non expiré, sinon null. */
     public Long verify(String token) {
+        Token t = read(token);
+        return t == null ? null : t.employeeId();
+    }
+
+    /** Jeton valide et non expiré (employé + session), sinon null. */
+    public Token read(String token) {
         try {
             String[] parts = token.split("\\.");
             if (parts.length != 3) {
@@ -72,7 +93,8 @@ public class JwtService {
             if (claims.path("exp").asLong() < Instant.now().getEpochSecond()) {
                 return null;
             }
-            return Long.parseLong(claims.path("sub").asText());
+            String sid = claims.path("sid").asText(null);
+            return new Token(Long.parseLong(claims.path("sub").asText()), sid == null ? null : java.util.UUID.fromString(sid));
         } catch (Exception e) {
             return null;
         }

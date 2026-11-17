@@ -24,7 +24,9 @@ const PRODUCTS = [
 ];
 const DAYS = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
 const TECHNO = { PUCE: 'Carte à puce', M1: 'Carte M1' };
-const TYPE_TONE = { FLOTTE: 'blue', VIP: 'purple', CLASSIQUE: 'gray', EMPLOYE: 'green' };
+const TYPE_TONE = { FLOTTE: 'blue', CLUB: 'navy', CLASSIQUE: 'gray', EMPLOYE: 'green' };
+const CLUB_TONE = { ACTIF: 'green', GRACE: 'orange', EXPIRE: 'red' };
+const MEMBERSHIP = { ADHESION: 'Adhésion', RENOUVELLEMENT_AUTO: 'Renouvellement d’office', RENOUVELLEMENT_PAYE: 'Renouvellement payé' };
 const REPLACE_REASON = { PERTE: 'Perte', VOL: 'Vol', DETERIORATION: 'Carte abîmée', AUTRE: 'Autre motif' };
 const expiry = (d) => (d ? `${String(d).slice(5, 7)}/${String(d).slice(2, 4)}` : '—');
 
@@ -158,6 +160,86 @@ function ReplaceModal({ card, onClose, onDone }) {
         La carte actuelle est bloquée (et mise en liste noire en cas de perte ou de vol). Le solde, les permissions, le véhicule,
         le chauffeur et le PIN passent sur la nouvelle carte, moins les frais de remplacement. La nouvelle carte doit être activée par une autre personne.
       </div>
+    </FormModal>
+  );
+}
+
+/** Adhésion Club : échéance, consommation sur 12 mois (renouvellement d'office), renouvellement payé, historique. */
+function ClubCard({ card, can, onSaved }) {
+  const notify = useToast();
+  const [renewing, setRenewing] = useState(false);
+  const [joining, setJoining] = useState(false);
+  const c = card.club;
+  if (!c || !c.status) return null;
+  const pct = Math.min(100, Math.round((c.spent12m / c.autoRenewSpend) * 100));
+  return (
+    <Card className="card-pad" style={{ background: '#16181d', color: '#f4f4f5' }}>
+      <div className="row between">
+        <span className="card-title" style={{ color: '#fff' }}>Carte Club</span>
+        <Badge tone={CLUB_TONE[c.status]}>{c.statusLabel}</Badge>
+      </div>
+      {c.until ? (
+        <div style={{ marginTop: 10, fontSize: 13.5, lineHeight: 1.6 }}>
+          Adhésion jusqu'au <b>{longDate(c.until)}</b>{c.status !== 'ACTIF' && <> · grâce jusqu'au {longDate(c.graceUntil)}</>}
+          <div style={{ marginTop: 10, opacity: 0.85 }}>Consommation sur 12 mois : <b>{fcfa(c.spent12m)} F</b> / {fcfa(c.autoRenewSpend)} F pour un renouvellement d'office</div>
+          <div style={{ marginTop: 6 }}><Progress value={pct} color={c.autoRenewReached ? 'var(--green-500)' : '#c9a227'} /></div>
+          <div style={{ marginTop: 6, opacity: 0.75, fontSize: 12.5 }}>
+            {c.autoRenewReached ? 'Renouvellement d’office à l’échéance.' : `Sinon renouvellement payé : ${fcfa(c.renewalFee)} F.`} Avantages : prix Club, plafonds plus élevés.
+          </div>
+        </div>
+      ) : <div style={{ marginTop: 10, opacity: 0.85, fontSize: 13.5 }}>Pas encore d'adhésion Club (dépôt initial à créditer).</div>}
+      {can('CARTES_GERER', 'RECHARGER') && card.status === 'ACTIVE' && (
+        <div className="row" style={{ gap: 8, marginTop: 12 }}>
+          {c.until ? <Button size="sm" icon={RefreshCw} onClick={() => setRenewing(true)}>Renouveler ({fcfa(c.renewalFee)} F)</Button>
+            : <Button size="sm" onClick={() => setJoining(true)}>Ouvrir l'adhésion</Button>}
+        </div>
+      )}
+      {(c.memberships || []).length > 0 && (
+        <div style={{ marginTop: 12, borderTop: '1px solid #2c2f36', paddingTop: 8, fontSize: 12.5, opacity: 0.85 }}>
+          {c.memberships.map((m, i) => (
+            <div key={i}>{MEMBERSHIP[m.kind]} · {longDate(m.periodStart)} → {longDate(m.periodEnd)}{m.fee ? ` · ${fcfa(m.fee)} F` : ''}{m.deposit ? ` · dépôt ${fcfa(m.deposit)} F` : ''}</div>
+          ))}
+        </div>
+      )}
+      {renewing && (
+        <FormModal title="Renouveler la carte Club" submitLabel={`Encaisser ${fcfa(c.renewalFee)} F`} onClose={() => setRenewing(false)} onSubmit={async () => {
+          await post(`/cards/${card.id}/club/renew`, { paymentMethod: document.getElementById('club-pm').value });
+          notify('Adhésion Club renouvelée pour 12 mois');
+          onSaved();
+        }}>
+          <Field label="Paiement"><label className="input"><select id="club-pm" defaultValue="ESPECES">
+            <option value="ESPECES">Espèces</option><option value="MOBILE_MONEY">Mobile money</option><option value="VIREMENT">Virement</option>
+          </select></label></Field>
+        </FormModal>
+      )}
+      {joining && (
+        <FormModal title="Adhésion Club" submitLabel="Créditer et ouvrir l'adhésion" onClose={() => setJoining(false)} onSubmit={async () => {
+          await post(`/cards/${card.id}/club/join`, { deposit: Number(document.getElementById('club-dep').value), paymentMethod: 'ESPECES' });
+          notify('Adhésion Club ouverte');
+          onSaved();
+        }}>
+          <Field label="Dépôt initial (F)" hint="200 000 F minimum, crédité sur la carte"><label className="input"><input id="club-dep" type="number" defaultValue="200000" min="1" /></label></Field>
+        </FormModal>
+      )}
+    </Card>
+  );
+}
+
+/** Ajustement manuel du solde : appliqué après l'approbation d'une seconde personne (Admin ou DAF). */
+function AdjustModal({ card, onClose }) {
+  const notify = useToast();
+  const [amount, setAmount] = useState('');
+  const [reason, setReason] = useState('');
+  return (
+    <FormModal title={`Ajuster le solde · ${masked(card.number)}`} submitLabel="Demander l'ajustement" onClose={onClose} onSubmit={async () => {
+      const r = await post(`/cards/${card.id}/adjust`, { amount: Number(amount), reason });
+      notify(r.message, 'info');
+    }}>
+      <div className="form-grid">
+        <Field label="Montant (F, négatif pour retirer)" hint={`Solde actuel : ${fcfa(card.balance)} F`}><TextInput type="number" value={amount} onChange={setAmount} required /></Field>
+        <Field label="Motif"><TextInput value={reason} onChange={setReason} required placeholder="Geste commercial, erreur de saisie…" /></Field>
+      </div>
+      <div className="muted" style={{ fontSize: 13, marginTop: 10 }}>Action sensible : une seconde personne (Admin ou DAF) doit l'approuver dans Validations.</div>
     </FormModal>
   );
 }
@@ -483,6 +565,9 @@ export default function CarteDetail() {
                   {can('CARTES_GERER') && c.holderId && ['ACTIVE', 'BLOQUEE', 'A_ACTIVER'].includes(c.status) && !(c.replacement && c.replacement.oldCardId === c.id) && (
                     <Button icon={RefreshCw} onClick={() => setModal('replace')}>Remplacer</Button>
                   )}
+                  {can('CARTES_GERER') && ['ACTIVE', 'BLOQUEE'].includes(c.status) && (
+                    <Button icon={Wallet} onClick={() => setModal('adjust')}>Ajuster le solde</Button>
+                  )}
                   {can('CARTES_GERER') && <Button icon={Pencil} onClick={() => setModal('edit')}>Modifier</Button>}
                   {can('RECHARGER') && c.status === 'ACTIVE' && (
                     <Button variant="primary" icon={Wallet} onClick={() => navigate(`/rechargements?card=${c.number}`)}>Recharger</Button>
@@ -528,6 +613,7 @@ export default function CarteDetail() {
                   </div>
                 </Card>
 
+                <ClubCard card={c} can={can} onSaved={reload} />
                 <ReplacementNote card={c} />
               </div>
 
@@ -574,6 +660,7 @@ export default function CarteDetail() {
             {modal === 'block' && <BlockModal card={c} onClose={() => setModal(null)} onSaved={reload} />}
             {modal === 'pin' && <PinModal card={c} onClose={() => setModal(null)} />}
             {modal === 'transfer' && <TransferModal card={c} onClose={() => setModal(null)} onSaved={reload} />}
+            {modal === 'adjust' && <AdjustModal card={c} onClose={() => setModal(null)} />}
             {modal === 'replace' && <ReplaceModal card={c} onClose={() => setModal(null)} onDone={(r) => navigate(`/cartes/${r.newCardId}`)} />}
           </>
         );

@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react';
-import { Search, CalendarDays, Activity, Fuel, Download, Cpu, Eye, User } from 'lucide-react';
-import { PageHeader, Card, Button, Select, SearchInput, Avatar, IcoBox, KV, Async, Empty, Pager } from '../components/ui.jsx';
+import { Search, CalendarDays, Activity, Fuel, Download, Cpu, Eye, User, Monitor, LogIn, X } from 'lucide-react';
+import { PageHeader, Card, Button, Badge, Select, SearchInput, Avatar, IcoBox, KV, Async, Empty, Pager } from '../components/ui.jsx';
 import { Donut } from '../components/charts.jsx';
-import { Modal } from '../components/feedback.jsx';
+import { Modal, useToast } from '../components/feedback.jsx';
 import { useApi, useLiveReload } from '../api/hooks.js';
 import { useLiveEvent } from '../api/live.jsx';
 import { useSession } from '../api/session.jsx';
-import { fileUrl, qs } from '../api/client.js';
+import { fileUrl, post, qs } from '../api/client.js';
 import { CATEGORY_COLORS, CATEGORY_LABELS, operationIcon } from '../lib/operations.js';
-import { avatarColor, date, exportCsv, isoDay, money, num, time } from '../lib/format.js';
+import { ago, avatarColor, date, dateTime, exportCsv, isoDay, money, num, time } from '../lib/format.js';
 
 const PERIODS = [
   { value: 'today', label: 'Aujourd’hui' },
@@ -19,6 +19,102 @@ const PERIODS = [
 function range(period) {
   const d = (n) => isoDay(new Date(Date.now() - n * 86400000));
   return { today: [d(0), d(0)], yesterday: [d(1), d(1)], week: [d(6), d(0)], month: [d(29), d(0)] }[period];
+}
+
+function pretty(json) {
+  if (!json) return null;
+  try {
+    return JSON.stringify(JSON.parse(json), null, 2);
+  } catch {
+    return json;
+  }
+}
+
+/** Détail d'une entrée : d'où (IP, appareil, session), avant / après, motif. */
+function EntryModal({ id, onClose }) {
+  const e = useApi(`/audit/entries/${id}`);
+  return (
+    <Modal title="Détail de l'opération" wide onClose={onClose}>
+      <Async state={e}>
+        {(x) => (
+          <>
+            <div className="strong" style={{ fontSize: 16 }}>{x.title}</div>
+            <div className="muted" style={{ marginTop: 4 }}>{x.detail}</div>
+            <div className="grid g2" style={{ gap: 20, marginTop: 14 }}>
+              <div>
+                <KV k="Date" v={dateTime(x.at)} />
+                <KV k="Par" v={x.actorName || 'Système'} />
+                {x.reason && <KV k="Motif" v={x.reason} />}
+                {x.amount != null && <KV k="Montant" v={money(x.amount)} />}
+              </div>
+              <div>
+                <KV k="Appareil" v={x.userAgent || '—'} />
+                <KV k="Adresse IP" v={x.ip || '—'} />
+                <KV k="Session" v={x.sessionId ? `ouverte ${dateTime(x.sessionStartedAt)} depuis ${x.sessionIp}` : '—'} />
+              </div>
+            </div>
+            {(x.beforeValue || x.afterValue) && (
+              <div className="grid g2" style={{ gap: 12, marginTop: 14 }}>
+                {[['Avant', x.beforeValue], ['Après', x.afterValue]].map(([k, v]) => (
+                  <div key={k}>
+                    <div className="section-label">{k}</div>
+                    <pre style={{ background: 'var(--surface-2)', borderRadius: 8, padding: 10, fontSize: 12, whiteSpace: 'pre-wrap', maxHeight: 260, overflow: 'auto' }}>{pretty(v) || '—'}</pre>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </Async>
+    </Modal>
+  );
+}
+
+/** Connexions : tentatives (échecs en rouge) et sessions ouvertes, révocables. */
+function Connexions() {
+  const notify = useToast();
+  const logins = useApi('/audit/logins?size=12');
+  const sessions = useApi('/audit/sessions');
+  const revoke = async (s) => {
+    try {
+      sessions.setData(await post(`/audit/sessions/${s.id}/revoke`));
+      notify(`Session de ${s.employeeName} fermée`);
+    } catch (e) {
+      notify(e.message, 'error');
+    }
+  };
+  return (
+    <Card className="card-pad">
+      <div className="row" style={{ gap: 8 }}><LogIn size={17} /><div className="card-title">Connexions</div></div>
+      <div className="section-label" style={{ marginTop: 10 }}>Dernières tentatives</div>
+      <Async state={logins}>
+        {(d) => d.items.map((a) => (
+          <div key={a.id} className="row" style={{ gap: 8, padding: '5px 0', fontSize: 12.5 }}>
+            <Badge tone={a.success ? 'green' : 'red'}>{a.success ? 'OK' : 'Échec'}</Badge>
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <span className="strong">{a.employeeName || a.email}</span>
+              <span className="muted"> · {a.userAgent || '—'} · {a.ip}{a.reason ? ` · ${a.reason}` : ''}</span>
+            </span>
+            <span className="muted num">{ago(a.at)}</span>
+          </div>
+        ))}
+      </Async>
+      <div className="section-label" style={{ marginTop: 12 }}>Sessions ouvertes</div>
+      <Async state={sessions}>
+        {(rows) => rows.slice(0, 12).map((s) => (
+          <div key={s.id} className="row" style={{ gap: 8, padding: '5px 0', fontSize: 12.5 }}>
+            <Monitor size={14} color="var(--muted-2)" />
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <span className="strong">{s.employeeName}</span>
+              <span className="muted"> · {s.userAgent || '—'} · {s.ip} · {num(s.actions)} action(s)</span>
+            </span>
+            <span className="muted num">{ago(s.lastSeenAt)}</span>
+            <button className="link-more" title="Fermer la session" onClick={() => revoke(s)}><X size={14} /></button>
+          </div>
+        ))}
+      </Async>
+    </Card>
+  );
 }
 
 export default function Journal() {
@@ -32,6 +128,7 @@ export default function Journal() {
   const [page, setPage] = useState(0);
   const [fresh, setFresh] = useState([]);
   const [preview, setPreview] = useState(false);
+  const [entry, setEntry] = useState(null);
   const [from, to] = range(period);
 
   const list = useApi(`/journal${qs({ q: search, from, to, category, stationId, userId, page, size: 25 })}`);
@@ -72,7 +169,7 @@ export default function Journal() {
     <>
       <PageHeader
         title="Journal d’opérations"
-        subtitle="Qui a fait quoi, et quand · toutes les opérations centralisées avec le point de vente et l’agent"
+        subtitle="Qui a fait quoi, quand et depuis quel appareil · le journal ne peut être ni modifié ni effacé"
       />
 
       <div className="grid split" style={{ gridTemplateColumns: 'minmax(0, 1fr) 320px', alignItems: 'start' }}>
@@ -109,7 +206,7 @@ export default function Journal() {
                       const system = !o.actorId;
                       const isFresh = fresh.some((f) => f.id === o.id);
                       return (
-                        <tr key={o.id} className={isFresh ? 'flash' : ''}>
+                        <tr key={o.id} className={isFresh ? 'flash' : ''} onClick={() => can('AUDIT') && setEntry(o.id)} style={can('AUDIT') ? { cursor: 'pointer' } : undefined}>
                           <td className="muted num" style={{ fontSize: 14, whiteSpace: 'nowrap' }}>
                             {period === 'today' ? time(o.at, true) : <>{date(o.at)}<br />{time(o.at, true)}</>}
                           </td>
@@ -123,6 +220,7 @@ export default function Journal() {
                               <div>
                                 <div className="cell-title">{o.actorName}</div>
                                 <div className="cell-sub">{[o.actorRole, o.place].filter(Boolean).join(' · ') || '—'}</div>
+                                {o.userAgent && <div className="cell-sub" style={{ fontSize: 11.5 }}><Monitor size={11} style={{ verticalAlign: '-1px' }} /> {o.userAgent} · {o.ip}</div>}
                               </div>
                             </div>
                           </td>
@@ -131,7 +229,7 @@ export default function Journal() {
                               <IcoBox icon={icon} tone={tone} size={32} />
                               <div>
                                 <div className="cell-title">{o.title}</div>
-                                <div className="cell-sub">{o.detail}</div>
+                                <div className="cell-sub">{o.detail}{o.reason ? ` · motif : ${o.reason}` : ''}{o.hasChanges ? ' · avant / après' : ''}</div>
                               </div>
                             </div>
                           </td>
@@ -170,6 +268,7 @@ export default function Journal() {
             ))}
           </Card>
 
+          {can('AUDIT') && <Connexions />}
           <Card className="card-pad">
             <div className="card-title">Résumé quotidien par email</div>
             <div style={{ marginTop: 8 }}>
@@ -183,6 +282,7 @@ export default function Journal() {
         </div>
       </div>
 
+      {entry && <EntryModal id={entry} onClose={() => setEntry(null)} />}
       {preview && (
         <Modal title="Aperçu du résumé quotidien" onClose={() => setPreview(false)} wide>
           <Async state={email}>

@@ -80,6 +80,7 @@ export default function Dashboard() {
   const { user, can } = useSession();
   const [period, setPeriod] = useState('Jour');
   const dash = useApi(`/dashboard?period=${PERIODS[period]}`);
+  const setup = useApi(can('PARAMETRES') ? '/setup/status' : null);
   useLiveReload(dash.reload, ['sale', 'operation', 'station'], 4000);
   useInterval(dash.reload, 60_000);
 
@@ -88,6 +89,11 @@ export default function Dashboard() {
       <PageHeader
         title={`Bonjour ${user?.firstName || ''}`}
         subtitle={`${todayLabel()} · voici l’activité de votre réseau en direct`}
+        tags={setup.data && !setup.data.complete && (
+          <button type="button" className="badge orange" style={{ border: 0, height: 28, cursor: 'pointer' }} onClick={() => navigate('/mise-en-route')}>
+            Mise en route du réseau : {setup.data.done} / {setup.data.total} étapes
+          </button>
+        )}
         actions={
           <>
             <Button

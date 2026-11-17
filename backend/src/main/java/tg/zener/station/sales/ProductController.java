@@ -28,7 +28,7 @@ import tg.zener.station.security.Auth;
 @RestController
 public class ProductController {
 
-    static final List<String> PROFILES = List.of("GRAND_PUBLIC", "EMPLOYE_STATION", "EMPLOYE_GROUPE", "PARTENAIRE");
+    static final List<String> PROFILES = List.of("GRAND_PUBLIC", "EMPLOYE_STATION", "EMPLOYE_GROUPE", "PARTENAIRE", "CLUB");
 
     private final Db db;
     private final Journal journal;
@@ -63,8 +63,13 @@ public class ProductController {
     @GetMapping("/api/products")
     public List<Map<String, Object>> products(@RequestParam(required = false) String category) {
         return db.list("""
-                \sSELECT id, code, name, category, unit, gas_size_kg, deposit_amount, card_type_code, active
-                FROM product WHERE CAST(:c AS text) IS NULL OR category = :c ORDER BY category, id""", Db.p("c", category));
+                \sSELECT id, code, name, category, unit, gas_size_kg, deposit_amount, card_type_code, active, subcategory, grade, brand,
+                       pack_size, pack_unit,
+                       CASE subcategory WHEN 'MOTEUR_4T' THEN 'Huile moteur 4 temps' WHEN 'MOTEUR_2T' THEN 'Huile 2 temps'
+                            WHEN 'DIESEL' THEN 'Huile diesel / poids lourds' WHEN 'BOITE_PONT' THEN 'Boîte et pont'
+                            WHEN 'HYDRAULIQUE' THEN 'Hydraulique' WHEN 'FREIN' THEN 'Liquide de frein'
+                            WHEN 'REFROIDISSEMENT' THEN 'Refroidissement' WHEN 'GRAISSE' THEN 'Graisse' WHEN 'AUTRE' THEN 'Autre' END AS subcategory_label
+                FROM product WHERE CAST(:c AS text) IS NULL OR category = :c ORDER BY category, subcategory NULLS FIRST, id""", Db.p("c", category));
     }
 
     /** Une ligne par produit, une colonne par profil : grand public, employé station, employé groupe, partenaire. */
@@ -83,7 +88,7 @@ public class ProductController {
     }
 
     public record PriceChange(@NotBlank String productCode,
-                              @NotBlank @Pattern(regexp = "GRAND_PUBLIC|EMPLOYE_STATION|EMPLOYE_GROUPE|PARTENAIRE") String profile,
+                              @NotBlank @Pattern(regexp = "GRAND_PUBLIC|EMPLOYE_STATION|EMPLOYE_GROUPE|PARTENAIRE|CLUB") String profile,
                               @NotNull @Min(0) Long price) {}
 
     /** effectiveAt : date d'effet (nulle ou passée : immédiat ; future : changement planifié). */
@@ -107,17 +112,20 @@ public class ProductController {
     public record ProductForm(@NotBlank String code, @NotBlank String name,
                               @NotBlank @Pattern(regexp = "CARBURANT|LUBRIFIANT|GAZ|ACCESSOIRE") String category,
                               @NotBlank String unit, BigDecimal gasSizeKg, Long depositAmount, @NotNull @Min(0) Long publicPrice,
-                              Boolean active) {}
+                              Boolean active,
+                              @Pattern(regexp = "MOTEUR_4T|MOTEUR_2T|DIESEL|BOITE_PONT|HYDRAULIQUE|FREIN|REFROIDISSEMENT|GRAISSE|AUTRE") String subcategory,
+                              String grade, String brand, BigDecimal packSize, String packUnit) {}
 
     @PostMapping("/api/products")
     @PreAuthorize("hasAuthority('PRIX')")
     @Transactional
     public List<Map<String, Object>> create(@Valid @RequestBody ProductForm f) {
         long id = db.insert("""
-                \sINSERT INTO product (code, name, category, unit, gas_size_kg, deposit_amount)
-                VALUES (upper(:c), :n, :cat, :u, :g, :d)""",
+                \sINSERT INTO product (code, name, category, unit, gas_size_kg, deposit_amount, subcategory, grade, brand, pack_size, pack_unit)
+                VALUES (upper(:c), :n, :cat, :u, :g, :d, :sc, :gr, :br, :ps, :pu)""",
                 Db.p("c", f.code().trim(), "n", f.name().trim(), "cat", f.category(), "u", f.unit(), "g", f.gasSizeKg(),
-                        "d", f.depositAmount()));
+                        "d", f.depositAmount(), "sc", lub(f) ? f.subcategory() : null, "gr", lub(f) ? blank(f.grade()) : null,
+                        "br", blank(f.brand()), "ps", f.packSize(), "pu", blank(f.packUnit())));
         for (String profile : PROFILES) {
             db.update("INSERT INTO product_price (product_id, profile, price, updated_by) VALUES (:p, :pr, :v, :u)",
                     Db.p("p", id, "pr", profile, "v", f.publicPrice(), "u", Auth.user().id()));
@@ -134,13 +142,24 @@ public class ProductController {
     @PreAuthorize("hasAuthority('PRIX')")
     public List<Map<String, Object>> update(@PathVariable long id, @Valid @RequestBody ProductForm f) {
         int n = db.update("""
-                \sUPDATE product SET name = :n, unit = :u, gas_size_kg = :g, deposit_amount = :d, active = COALESCE(:a, active)
+                \sUPDATE product SET name = :n, unit = :u, gas_size_kg = :g, deposit_amount = :d, active = COALESCE(:a, active),
+                       subcategory = CASE WHEN category = 'LUBRIFIANT' THEN :sc END, grade = CASE WHEN category = 'LUBRIFIANT' THEN :gr END,
+                       brand = :br, pack_size = :ps, pack_unit = :pu
                 WHERE id = :id AND category <> 'CARTE'""",
-                Db.p("id", id, "n", f.name().trim(), "u", f.unit(), "g", f.gasSizeKg(), "d", f.depositAmount(), "a", f.active()));
+                Db.p("id", id, "n", f.name().trim(), "u", f.unit(), "g", f.gasSizeKg(), "d", f.depositAmount(), "a", f.active(),
+                        "sc", f.subcategory(), "gr", blank(f.grade()), "br", blank(f.brand()), "ps", f.packSize(), "pu", blank(f.packUnit())));
         if (n == 0) {
             throw ApiException.notFound("Produit introuvable");
         }
         return prices(null);
+    }
+
+    private static boolean lub(ProductForm f) {
+        return "LUBRIFIANT".equals(f.category());
+    }
+
+    private static String blank(String v) {
+        return v == null || v.isBlank() ? null : v.trim();
     }
 
     static String label(String profile) {
@@ -148,6 +167,7 @@ public class ProductController {
             case "EMPLOYE_STATION" -> "employé station";
             case "EMPLOYE_GROUPE" -> "employé groupe";
             case "PARTENAIRE" -> "partenaire";
+            case "CLUB" -> "club";
             default -> "grand public";
         };
     }

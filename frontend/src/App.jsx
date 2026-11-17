@@ -23,6 +23,9 @@ import Parametres from './pages/Parametres.jsx';
 import Extractions from './pages/Extractions.jsx';
 import Flottes from './pages/Flottes.jsx';
 import Approvisionnement from './pages/Approvisionnement.jsx';
+import Controles from './pages/Controles.jsx';
+import Atelier from './pages/Atelier.jsx';
+import MiseEnRoute from './pages/MiseEnRoute.jsx';
 
 // HashRouter : fonctionne aussi en file:// dans Electron
 export default function App() {
@@ -53,6 +56,9 @@ export default function App() {
           <Route path="/extractions" element={<Extractions />} />
           <Route path="/flottes" element={<Flottes />} />
           <Route path="/approvisionnement" element={<Approvisionnement />} />
+          <Route path="/controles" element={<Controles />} />
+          <Route path="/atelier" element={<Atelier />} />
+          <Route path="/mise-en-route" element={<MiseEnRoute />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

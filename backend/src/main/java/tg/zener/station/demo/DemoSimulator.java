@@ -284,7 +284,7 @@ public class DemoSimulator {
         }
         long pdvId = id(pdv);
         Map<String, Object> card = db.one("""
-                \sSELECT number FROM card WHERE pdv_id = :p AND status = 'PDV' ORDER BY random() LIMIT 1""", Db.p("p", pdvId));
+                \sSELECT number, type_code FROM card WHERE pdv_id = :p AND status = 'PDV' ORDER BY random() LIMIT 1""", Db.p("p", pdvId));
         Long agent = db.value("SELECT employee_id FROM pdv_agent WHERE pdv_id = :p ORDER BY random() LIMIT 1", Db.p("p", pdvId), Long.class);
         if (card == null || agent == null) {
             return;
@@ -294,7 +294,8 @@ public class DemoSimulator {
         pdvs.sellCard(pdvId, new PdvService.CardSale(UUID.randomUUID(), (String) card.get("number"),
                 new PdvService.Holder(name, "CNI", String.format("%04d-%03d-%04d", rnd.nextInt(10000), rnd.nextInt(1000), rnd.nextInt(10000)),
                         String.format("+228 9%d %02d %02d %02d", rnd.nextInt(9), rnd.nextInt(100), rnd.nextInt(100), rnd.nextInt(100)), null),
-                mm ? "MOBILE_MONEY" : "ESPECES", mm ? momo() : null, null), user(agent), false);
+                mm ? "MOBILE_MONEY" : "ESPECES", mm ? momo() : null, null, "CLUB".equals(card.get("typeCode")) ? 200_000L : null),
+                user(agent), false);
     }
 
     /** Recharge au guichet ou à distance d'une carte de particulier (sous le palier). */
@@ -340,16 +341,16 @@ public class DemoSimulator {
             return;
         }
         Map<String, Object> card = db.one("""
-                \sSELECT c.id, c.number, c.issued_by FROM card c WHERE c.status = 'A_ACTIVER' AND c.holder_id IS NOT NULL
-                ORDER BY c.sold_at NULLS LAST, c.id LIMIT 1""", Map.of());
+                \sSELECT c.id, c.number, c.issued_by, c.holder_id FROM card c WHERE c.status = 'A_ACTIVER'
+                ORDER BY c.holder_id NULLS LAST, c.sold_at NULLS LAST, c.id LIMIT 1""", Map.of());
         Long accountant = db.value("""
                 \sSELECT id FROM employee WHERE role_code = 'COMPTABLE' AND active AND id <> COALESCE(CAST(:i AS bigint), 0)
                 ORDER BY random() LIMIT 1""", Db.p("i", card == null ? null : card.get("issuedBy")), Long.class);
         if (card == null || accountant == null) {
             return;
         }
-        db.update("UPDATE card SET status = 'ACTIVE', activated_by = :u, activated_at = now() WHERE id = :id",
-                Db.p("id", card.get("id"), "u", accountant));
+        db.update("UPDATE card SET status = :s, activated_by = :u, activated_at = now() WHERE id = :id",
+                Db.p("id", card.get("id"), "u", accountant, "s", card.get("holderId") == null ? "STOCK" : "ACTIVE"));
         cardEvents.recordAs(accountant, ((Number) card.get("id")).longValue(), CardEvents.ACTIVATION, null, null, null);
         journal.logAs(accountant, "CARTE_ACTIVEE", Journal.VENTES_CARTES, "Carte activée",
                 "···" + ((String) card.get("number")).substring(8), null, null, null);

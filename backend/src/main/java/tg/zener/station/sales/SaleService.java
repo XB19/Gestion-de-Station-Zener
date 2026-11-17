@@ -39,10 +39,12 @@ public class SaleService {
     private final StockService stock;
     private final Journal journal;
     private final LiveFeed live;
+    private final tg.zener.station.cards.ClubService club;
     private final ZoneId zone;
 
     public SaleService(Db db, CardService cards, StockService stock, Journal journal, LiveFeed live,
-                       @Value("${app.timezone}") String zone) {
+                       @Value("${app.timezone}") String zone, @org.springframework.context.annotation.Lazy tg.zener.station.cards.ClubService club) {
+        this.club = club;
         this.db = db;
         this.cards = cards;
         this.stock = stock;
@@ -100,6 +102,10 @@ public class SaleService {
             if (profile == null) {
                 profile = "GRAND_PUBLIC";
             }
+            // carte Club en cours d'adhésion (ou en période de grâce) : profil de prix Club
+            if ("CLUB".equals(card.get("typeCode")) && club.perks(card)) {
+                profile = "CLUB";
+            }
         }
 
         List<Object[]> priced = new ArrayList<>(); // productId, code, category, quantity, unitPrice, amount, name
@@ -115,6 +121,14 @@ public class SaleService {
             long unit = price(productId, profile);
             if (l.withDeposit() && p.get("depositAmount") != null) {
                 unit += ((Number) p.get("depositAmount")).longValue(); // bouteille neuve : gaz + consigne
+            }
+            if (s.pdvId() != null) {
+                // point de vente promotionnel : prix de campagne s'il est plus bas
+                Long promo = db.value("SELECT promo_price FROM pdv_product WHERE pdv_id = :pv AND product_id = :p",
+                        Db.p("pv", s.pdvId(), "p", productId), Long.class);
+                if (promo != null && promo < unit) {
+                    unit = promo;
+                }
             }
             long amount = l.quantity().multiply(BigDecimal.valueOf(unit)).setScale(0, RoundingMode.HALF_UP).longValue();
             total += amount;
@@ -159,8 +173,8 @@ public class SaleService {
             String category = (String) p[2];
             if ("CARBURANT".equals(category)) {
                 stock.moveTank(stock.tankFor(s.stationId(), productId), q.negate(), "VENTE", ref, s.employeeId(), null);
-            } else if ("CARTE".equals(category)) {
-                continue; // les cartes sont suivies une par une (stock de cartes numérotées)
+            } else if ("CARTE".equals(category) || "SERVICE".equals(category)) {
+                continue; // cartes suivies une par une ; prestations (main-d'œuvre) sans stock
             } else {
                 stock.move(s.stationId(), s.pdvId(), productId, q.negate(), "ECHANGE_GAZ".equals(s.kind()) ? "ECHANGE" : "VENTE",
                         ref, s.employeeId(), null);

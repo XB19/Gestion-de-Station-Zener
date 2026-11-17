@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { FirstLogin, Tour } from '../components/Onboarding.jsx';
 import { api, clearSession, getStoredUser, getToken, saveSession, setUnauthorizedHandler, updateStoredUser } from './client.js';
 
 const SessionContext = createContext(null);
@@ -34,19 +35,26 @@ export function SessionProvider({ children }) {
   }, []);
 
   const logout = useCallback(() => {
+    api('/auth/logout', { method: 'POST' }).catch(() => {}); // la session est close côté serveur
     clearSession();
     setUser(null);
     navigate('/login', { replace: true });
   }, [navigate]);
+
+  const setProfile = useCallback((u) => {
+    setUser(u);
+    updateStoredUser(u);
+  }, []);
 
   const value = useMemo(
     () => ({
       user,
       login,
       logout,
+      setProfile,
       can: (...rights) => !!user && rights.some((r) => user.rights?.includes(r)),
     }),
-    [user, login, logout],
+    [user, login, logout, setProfile],
   );
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
 }
@@ -60,5 +68,11 @@ export function RequireAuth({ children }) {
   const { user } = useSession();
   const location = useLocation();
   if (!user) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
-  return children;
+  if (user.mustChangePassword) return <FirstLogin />;
+  return (
+    <>
+      {children}
+      <Tour />
+    </>
+  );
 }

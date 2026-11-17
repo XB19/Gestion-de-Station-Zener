@@ -2,12 +2,14 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Download, UserPlus, Users, Search, CircleCheck, Fuel, IdCard, Check, Pencil, Trophy, Crown, Camera, UserX, UserCheck, X,
+  KeyRound, Copy, CheckCircle2, Circle, ShieldAlert,
 } from 'lucide-react';
 import { PageHeader, Card, Badge, Button, Select, SearchInput, Avatar, KV, Async, Empty, Pager, StatusBadge } from '../components/ui.jsx';
 import { FormModal, Field, Modal, TextInput, SelectInput, useToast } from '../components/feedback.jsx';
 import { useApi, useLiveReload } from '../api/hooks.js';
 import { del, fileUrl, post, put, qs, upload } from '../api/client.js';
 import { useSession } from '../api/session.jsx';
+import CardPicker from '../components/CardPicker.jsx';
 import { avatarColor, dateTime, exportCsv, fcfa, money, num, ROLE_TONES } from '../lib/format.js';
 
 const ROLE_SHORT = { ADMIN: 'Admin', GERANT: 'Gérant', CHEF_POSTE: 'Chef p.', POMPISTE: 'Pomp.', COMPTABLE: 'Compta.', DAF: 'DAF',
@@ -21,8 +23,9 @@ function EmployeeFormModal({ employee, roles, stations, onClose, onSaved }) {
   const [f, setF] = useState({
     firstName: employee?.firstName || '', lastName: employee?.lastName || '', email: employee?.email || '', phone: employee?.phone || '',
     role: employee?.role || 'POMPISTE', stationId: employee?.stationId || (scoped ? user.stationId : ''), idDocType: employee?.idDocType || 'CNI',
-    idDocNumber: employee?.idDocNumber || '', password: '',
+    idDocNumber: employee?.idDocNumber || '', password: '', reason: '',
   });
+  const sensitive = ['ADMIN', 'DAF'].includes(f.role) && f.role !== employee?.role;
   const set = (k) => (v) => setF((x) => ({ ...x, [k]: v }));
   const roleOptions = roles.filter((r) => !scoped || !RESERVED.includes(r.code)).map((r) => ({ value: r.code, label: r.label }));
   return (
@@ -30,8 +33,10 @@ function EmployeeFormModal({ employee, roles, stations, onClose, onSaved }) {
       onClose={onClose} onSubmit={async () => {
         const body = { ...f, stationId: f.stationId ? Number(f.stationId) : null, email: f.email || null, phone: f.phone || null,
           idDocNumber: f.idDocNumber || null, password: f.password || null };
-        const r = employee ? await put(`/employees/${employee.id}`, body) : await post('/employees', body);
-        notify(employee ? 'Employé modifié' : `Employé créé · matricule ${r.matricule}`);
+        const r = employee ? await put(`/employees/${employee.id}`, { ...body, reason: f.reason || null })
+          : await post('/employees', { ...body, reason: f.reason || null });
+        if (r.pendingValidation) notify(r.pendingValidation.message, 'info');
+        else notify(employee ? 'Employé modifié' : `Employé créé · matricule ${r.matricule}`);
         onSaved(r);
       }}>
       <div className="form-grid">
@@ -46,11 +51,80 @@ function EmployeeFormModal({ employee, roles, stations, onClose, onSaved }) {
         <Field label="Téléphone"><TextInput value={f.phone} onChange={set('phone')} /></Field>
         <Field label="Pièce d’identité"><SelectInput value={f.idDocType} onChange={set('idDocType')} options={['CNI', 'Passeport', 'Permis']} /></Field>
         <Field label="Numéro de la pièce"><TextInput value={f.idDocNumber} onChange={set('idDocNumber')} /></Field>
-        <Field label={employee ? 'Nouveau mot de passe (facultatif)' : 'Mot de passe (8 caractères min.)'} full>
+        <Field label={employee ? 'Nouveau mot de passe (facultatif)' : 'Mot de passe'} full
+          hint={employee ? 'Provisoire : à changer à la prochaine connexion' : 'Vide : un mot de passe provisoire est créé et affiché une fois ; il devra être changé à la première connexion'}>
           <TextInput type="password" value={f.password} onChange={set('password')} minLength={8} />
         </Field>
+        {sensitive && (
+          <Field label="Motif (compte Admin / DAF)" full hint="Rôle sensible : le compte ne prend ce rôle qu'après l'approbation d'une seconde personne (Admin ou DAF)">
+            <TextInput value={f.reason} onChange={set('reason')} required />
+          </Field>
+        )}
       </div>
     </FormModal>
+  );
+}
+
+/** Mise en route d'un nouvel employé : mot de passe provisoire (montré une fois), photo, carte, première connexion. */
+function OnboardingModal({ created, onClose, onOpen }) {
+  const notify = useToast();
+  const ob = useApi(`/employees/${created.id}/onboarding`);
+  const [card, setCard] = useState(null);
+  const fileRef = useRef(null);
+  const run = async (fn, msg) => {
+    try {
+      await fn();
+      notify(msg);
+      ob.reload();
+    } catch (e) {
+      notify(e.message, 'error');
+    }
+  };
+  return (
+    <Modal title={`Mise en route · ${created.name}`} wide onClose={onClose} footer={<>
+      <Button onClick={onClose}>Terminer plus tard</Button>
+      <Button variant="primary" onClick={() => onOpen(created.id)}>Ouvrir la fiche</Button>
+    </>}>
+      {created.temporaryPassword && (
+        <div className="row" style={{ gap: 12, background: 'var(--surface-2)', borderRadius: 10, padding: '12px 14px' }}>
+          <KeyRound size={20} color="var(--primary)" />
+          <div style={{ flex: 1 }}>
+            <div className="muted" style={{ fontSize: 12.5 }}>Mot de passe provisoire de {created.email} (affiché une seule fois, à remettre en main propre)</div>
+            <div className="num strong" style={{ fontSize: 20, letterSpacing: '.08em', marginTop: 2 }}>{created.temporaryPassword}</div>
+          </div>
+          <Button size="sm" icon={Copy} onClick={() => navigator.clipboard?.writeText(created.temporaryPassword).then(() => notify('Copié'))}>Copier</Button>
+        </div>
+      )}
+      {created.pendingValidation && (
+        <div className="row" style={{ gap: 8, marginTop: 12, color: 'var(--orange)' }}><ShieldAlert size={16} /> {created.pendingValidation.message}</div>
+      )}
+      <Async state={ob}>
+        {(o) => (
+          <div style={{ marginTop: 14 }}>
+            {o.steps.map((st) => (
+              <div key={st.key} className="row" style={{ gap: 10, padding: '9px 0', borderBottom: '1px solid var(--border)' }}>
+                {st.done ? <CheckCircle2 size={18} color="var(--green)" /> : <Circle size={18} color="var(--muted-2)" />}
+                <span style={{ flex: 1 }} className={st.done ? 'muted' : 'strong'}>{st.label}</span>
+                {!st.done && st.key === 'PHOTO' && (
+                  <>
+                    <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp" style={{ display: 'none' }}
+                      onChange={(ev) => ev.target.files[0] && run(() => upload(`/employees/${created.id}/photo`, ev.target.files[0]), 'Photo enregistrée')} />
+                    <Button size="sm" icon={Camera} onClick={() => fileRef.current?.click()}>Ajouter</Button>
+                  </>
+                )}
+                {!st.done && st.key === 'CARTE' && (
+                  <span className="row" style={{ gap: 6 }}>
+                    <span style={{ width: 230 }}><CardPicker value={card} onChange={setCard} height={34} placeholder="Carte employé activée" /></span>
+                    <Button size="sm" icon={IdCard} disabled={!card} onClick={() => run(() => post(`/employees/${created.id}/card`, { number: card.number }), 'Carte employé attribuée')}>Attribuer</Button>
+                  </span>
+                )}
+                {!st.done && ['CONNEXION', 'VISITE'].includes(st.key) && <span className="muted" style={{ fontSize: 12.5 }}>À la première connexion</span>}
+              </div>
+            ))}
+          </div>
+        )}
+      </Async>
+    </Modal>
   );
 }
 
@@ -192,9 +266,13 @@ function RightsMatrix() {
       for (const role of matrix.data.roles) {
         const wanted = matrix.data.rights.filter((r) => draft[r.code].includes(role.code)).map((r) => r.code);
         const before = matrix.data.rights.filter((r) => r.roles.includes(role.code)).map((r) => r.code);
-        if (wanted.sort().join() !== before.sort().join()) await put(`/roles/${role.code}/rights`, { rights: wanted });
+        if (wanted.sort().join() !== before.sort().join()) {
+          const reason = window.prompt(`Motif de la modification des droits du rôle ${role.label} :`) || '';
+          if (!reason.trim()) throw new Error('Motif requis');
+          await put(`/roles/${role.code}/rights`, { rights: wanted, reason });
+        }
       }
-      notify('Droits enregistrés · appliqués à la prochaine requête des utilisateurs');
+      notify('Demande envoyée : les droits changeront après l’approbation d’une seconde personne (Admin ou DAF)', 'info');
       setEdit(false);
       matrix.reload();
     } catch (e) {
@@ -206,7 +284,10 @@ function RightsMatrix() {
       <div className="card-head" style={{ paddingBottom: 14 }}>
         <div>
           <div className="card-title">Rôles & droits</div>
-          <div className="card-sub">{matrix.data ? `${matrix.data.roles.length} rôles · ${matrix.data.rights.length} droits` : '…'}</div>
+          <div className="card-sub">{matrix.data ? `${matrix.data.roles.length} rôles · ${matrix.data.rights.length} droits · toute modification passe par une seconde personne` : '…'}</div>
+          {(matrix.data?.pendingRequests || []).map((r) => (
+            <div key={r.id} className="row" style={{ gap: 6, color: 'var(--orange)', fontSize: 12.5, marginTop: 4 }}><ShieldAlert size={14} /> {r.ref} en attente · {r.summary}</div>
+          ))}
         </div>
         <span className="row" style={{ gap: 6 }}>
           <Button size="sm" onClick={() => setAll(!all)}>{all ? 'Droits principaux' : 'Tous les droits'}</Button>
@@ -264,6 +345,7 @@ function RightsMatrix() {
 }
 
 export default function Employes() {
+  const [created, setCreated] = useState(null);
   const { can, user } = useSession();
   const [params, setParams] = useSearchParams();
   const [q, setQ] = useState('');
@@ -403,8 +485,10 @@ export default function Employes() {
 
       {modal?.type === 'new' && (
         <EmployeeFormModal roles={roles.data.roles} stations={stations.data} onClose={close}
-          onSaved={(r) => { list.reload(); summary.reload(); setModal({ type: 'sheet', id: r.id }); }} />
+          onSaved={(r) => { list.reload(); summary.reload(); setCreated(r); }} />
       )}
+      {created && <OnboardingModal created={created} onClose={() => { setCreated(null); list.reload(); }}
+        onOpen={(id) => { setCreated(null); setModal({ type: 'sheet', id }); }} />}
       {modal?.type === 'sheet' && roles.data && stations.data && (
         <EmployeeSheet id={modal.id} roles={roles.data.roles} stations={stations.data} onClose={close} onChanged={() => { list.reload(); summary.reload(); }} />
       )}

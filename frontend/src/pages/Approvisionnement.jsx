@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Truck, PackageCheck, Plus, Pencil, Ban, Send, Tags, CalendarClock, Factory, Fuel } from 'lucide-react';
 import { PageHeader, Card, Kpi, Badge, Button, Segmented, Async, Empty, Pager } from '../components/ui.jsx';
 import { FormModal, Field, TextInput, SelectInput, useToast } from '../components/feedback.jsx';
@@ -24,12 +25,13 @@ const ORDER_FILTERS = ['En cours', 'Livrées', 'Annulées', 'Toutes'];
 const iso = (local) => (local ? new Date(local).toISOString() : null);
 const qty = (v) => `${num(v)} L`;
 
-function OrderModal({ suppliers, stations, products, onClose, onSaved }) {
+function OrderModal({ suppliers, stations, products, prefill, onClose, onSaved }) {
   const notify = useToast();
   const fuels = products.filter((p) => p.category === 'CARBURANT');
   const [f, setF] = useState({
-    supplierId: String(suppliers.find((s) => s.kind === 'CARBURANT')?.id || ''), stationId: String(stations[0]?.id || ''),
-    productCode: fuels[0]?.code || '', quantity: '', unitPrice: '', expectedAt: '', sellerName: '', sellerPhone: '', note: '',
+    supplierId: String(suppliers.find((s) => s.kind === 'CARBURANT')?.id || ''), stationId: String(prefill?.station || stations[0]?.id || ''),
+    productCode: prefill?.product || fuels[0]?.code || '', quantity: prefill?.quantity || '', unitPrice: '', expectedAt: '', sellerName: '', sellerPhone: '',
+    note: prefill ? 'Commande suite à l’alerte de niveau de cuve' : '',
   });
   const set = (k) => (v) => setF((x) => ({ ...x, [k]: v }));
   const amount = Math.round((Number(f.quantity) || 0) * (Number(f.unitPrice) || 0));
@@ -286,7 +288,9 @@ export default function Approvisionnement() {
   const canPrice = can('PRIX');
   const tabs = [canReceive && 'Commandes', canReceive && 'Fournisseurs', 'Prix'].filter(Boolean);
   const [tab, setTab] = useState(tabs[0]);
-  const [modal, setModal] = useState(null);
+  const [params, setParams] = useSearchParams();
+  const [modal, setModal] = useState(params.get('station') ? { type: 'order', prefill: { station: params.get('station'),
+    product: params.get('product'), quantity: params.get('quantity') } } : null);
   const [version, setVersion] = useState(0);
   const suppliers = useApi(canReceive ? '/suppliers?all=true' : null);
   const open = useApi(canReceive ? `/supplier-orders?status=EN_COURS&size=200&v=${version}` : null);
@@ -352,7 +356,7 @@ export default function Approvisionnement() {
       </Card>
 
       {modal?.type === 'order' && (
-        <OrderModal suppliers={suppliers.data || []} stations={stations.data || []} products={products.data || []} onClose={() => setModal(null)} onSaved={done} />
+        <OrderModal suppliers={suppliers.data || []} stations={stations.data || []} products={products.data || []} prefill={modal.prefill} onClose={() => { setModal(null); if (params.get('station')) setParams({}); }} onSaved={done} />
       )}
       {modal?.type === 'ship' && <ShipModal order={modal.order} onClose={() => setModal(null)} onSaved={done} />}
       {modal?.type === 'receive' && <ReceiveModal order={modal.order} onClose={() => setModal(null)} onSaved={done} />}

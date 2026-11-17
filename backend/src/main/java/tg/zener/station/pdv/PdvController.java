@@ -35,6 +35,7 @@ import tg.zener.station.common.Settings;
 import tg.zener.station.journal.Journal;
 import tg.zener.station.security.Auth;
 import tg.zener.station.security.CurrentUser;
+import tg.zener.station.sales.SaleService;
 import tg.zener.station.validations.ValidationService;
 
 /** Points de vente (écran 10) : liste, demande d'ouverture, cartes attribuées, ventes, synchronisation, clôture. */
@@ -50,9 +51,13 @@ public class PdvController {
     private final Journal journal;
     private final TransactionTemplate tx;
     private final CardEvents cardEvents;
+    private final tg.zener.station.stock.StockService stock;
+    private final SaleService sales;
 
     public PdvController(Db db, PdvService pdvs, ValidationService validations, Refs refs, Settings settings, Journal journal,
-                         PlatformTransactionManager tm, CardEvents cardEvents) {
+                         PlatformTransactionManager tm, CardEvents cardEvents, tg.zener.station.stock.StockService stock, SaleService sales) {
+        this.stock = stock;
+        this.sales = sales;
         this.db = db;
         this.pdvs = pdvs;
         this.validations = validations;
@@ -67,8 +72,10 @@ public class PdvController {
         long offline = settings.getLong("pdv.offline_seconds", 300);
         return """
                 \sSELECT p.id, p.code, p.name, p.kind, p.address, p.latitude, p.longitude, p.start_date, p.end_date, p.status,
-                       p.cards_planned, p.reason, p.last_sync_at, p.created_at,
-                       CASE WHEN p.status = 'OUVERT' AND p.kind = 'TEMPORAIRE'
+                       p.cards_planned, p.reason, p.last_sync_at, p.created_at, p.campaign, p.offer, p.session_no, p.session_started_at,
+                       CASE p.kind WHEN 'PERMANENT' THEN 'Permanent' WHEN 'PROMOTIONNEL' THEN 'Promotionnel' ELSE 'Temporaire' END AS kind_label,
+                       (SELECT count(*) FROM pdv_product pp WHERE pp.pdv_id = p.id) AS products,
+                       CASE WHEN p.status = 'OUVERT' AND p.kind <> 'PERMANENT'
                                  AND (p.last_sync_at IS NULL OR p.last_sync_at < now() - interval '{OFFLINE} seconds') THEN 'Hors ligne'
                             WHEN p.status = 'OUVERT' THEN 'Ouvert' WHEN p.status = 'DEMANDE' THEN 'À valider'
                             WHEN p.status = 'A_CLOTURER' THEN 'À clôturer' WHEN p.status = 'CLOS' THEN 'Clos' ELSE 'Refusé' END AS status_label,
@@ -100,6 +107,8 @@ public class PdvController {
                 \sSELECT count(*) FILTER (WHERE status = 'OUVERT') AS open,
                        count(*) FILTER (WHERE status = 'OUVERT' AND kind = 'PERMANENT') AS open_permanent,
                        count(*) FILTER (WHERE status = 'OUVERT' AND kind = 'TEMPORAIRE') AS open_temporary,
+                       count(*) FILTER (WHERE status = 'OUVERT' AND kind = 'PROMOTIONNEL') AS open_promotional,
+                       count(*) FILTER (WHERE status = 'CLOS' AND kind <> 'PERMANENT') AS reopenable,
                        count(*) FILTER (WHERE status = 'DEMANDE') AS pending_requests,
                        count(*) FILTER (WHERE status = 'A_CLOTURER') AS to_close
                 FROM pdv""", Map.of());
@@ -124,7 +133,15 @@ public class PdvController {
                 FROM pdv_agent a JOIN employee e ON e.id = a.employee_id
                 WHERE a.pdv_id = :id ORDER BY a.role DESC, cards_sold DESC""", Db.p("id", id)));
         p.put("reconciliation", reconciliation(id));
-        p.put("closure", db.one("SELECT * FROM pdv_closure WHERE pdv_id = :id", Db.p("id", id)));
+        p.put("closure", db.one("SELECT * FROM pdv_closure WHERE pdv_id = :id ORDER BY session_no DESC LIMIT 1", Db.p("id", id)));
+        p.put("sessions", db.list("""
+                \sSELECT ps.session_no, ps.start_date, ps.end_date, ps.status, ps.reason, ps.opened_at, ps.closed_at, v.ref AS validation_ref,
+                       e.first_name || ' ' || e.last_name AS requested_by_name, c.gap, c.counted_cash, c.counted_mm, c.cards_sold,
+                       c.products_sold_amount
+                FROM pdv_session ps LEFT JOIN validation_request v ON v.id = ps.validation_id LEFT JOIN employee e ON e.id = ps.requested_by
+                LEFT JOIN pdv_closure c ON c.pdv_id = ps.pdv_id AND c.session_no = ps.session_no
+                WHERE ps.pdv_id = :id ORDER BY ps.session_no DESC""", Db.p("id", id)));
+        p.put("productsList", products(id));
         p.put("cardsByType", db.list("""
                 \sSELECT c.type_code, count(*) AS allocated, count(pc.sold_at) AS sold
                 FROM pdv_card pc JOIN card c ON c.id = pc.card_id WHERE pc.pdv_id = :id GROUP BY c.type_code""", Db.p("id", id)));
@@ -137,12 +154,16 @@ public class PdvController {
                 \sSELECT count(*) AS cards_allocated, count(sold_at) AS cards_sold,
                        count(*) FILTER (WHERE returned_at IS NOT NULL) AS cards_returned,
                        count(*) FILTER (WHERE sold_at IS NULL AND returned_at IS NULL) AS cards_remaining
-                FROM pdv_card WHERE pdv_id = :id""", Db.p("id", id));
+                FROM pdv_card WHERE pdv_id = :id
+                  AND allocated_at >= COALESCE((SELECT session_started_at FROM pdv WHERE id = :id), '-infinity')""", Db.p("id", id));
         r.putAll(db.one("""
                 \sSELECT COALESCE(sum(total) FILTER (WHERE payment_method = 'ESPECES'), 0) AS expected_cash,
                        COALESCE(sum(total) FILTER (WHERE payment_method = 'MOBILE_MONEY'), 0) AS expected_mobile_money,
+                       COALESCE(sum(total) FILTER (WHERE payment_method = 'CARTE'), 0) AS expected_card,
+                       COALESCE(sum(total) FILTER (WHERE kind <> 'CARTE'), 0) AS products_amount,
                        COALESCE(sum(total), 0) AS expected_total
-                FROM sale WHERE pdv_id = :id""", Db.p("id", id)));
+                FROM sale WHERE pdv_id = :id
+                  AND at >= COALESCE((SELECT session_started_at FROM pdv WHERE id = :id), '-infinity')""", Db.p("id", id)));
         long allocated = ((Number) r.get("cardsAllocated")).longValue();
         long accounted = ((Number) r.get("cardsSold")).longValue() + ((Number) r.get("cardsReturned")).longValue()
                 + ((Number) r.get("cardsRemaining")).longValue();
@@ -154,7 +175,7 @@ public class PdvController {
 
     public record PdvForm(@NotBlank String name, String address, BigDecimal latitude, BigDecimal longitude,
                           LocalDate startDate, LocalDate endDate, @Min(0) Integer cardsPlanned, String reason,
-                          List<Long> agentIds) {}
+                          List<Long> agentIds, @Pattern(regexp = "TEMPORAIRE|PROMOTIONNEL") String kind, String campaign, String offer) {}
 
     /** Point de vente permanent (siège) : ouvert immédiatement. */
     @PostMapping
@@ -183,18 +204,172 @@ public class PdvController {
             throw new ApiException("La date de fin est déjà passée");
         }
         CurrentUser u = Auth.user();
+        String kind = "PROMOTIONNEL".equals(f.kind()) ? "PROMOTIONNEL" : "TEMPORAIRE";
+        if ("PROMOTIONNEL".equals(kind) && (f.campaign() == null || f.campaign().isBlank())) {
+            throw new ApiException("Campagne requise pour un point de vente promotionnel");
+        }
         long id = db.insert("""
                 \sINSERT INTO pdv (code, name, kind, address, latitude, longitude, start_date, end_date, status, cards_planned, reason,
-                                 requested_by)
-                VALUES (:c, :n, 'TEMPORAIRE', :a, :lat, :lon, :sd, :ed, 'DEMANDE', :cp, :r, :u)""",
-                Db.p("c", refs.pdv(), "n", f.name().trim(), "a", f.address(), "lat", f.latitude(), "lon", f.longitude(),
-                        "sd", f.startDate(), "ed", f.endDate(), "cp", f.cardsPlanned(), "r", f.reason(), "u", u.id()));
+                                 requested_by, campaign, offer)
+                VALUES (:c, :n, :k, :a, :lat, :lon, :sd, :ed, 'DEMANDE', :cp, :r, :u, :cmp, :off)""",
+                Db.p("c", refs.pdv(), "n", f.name().trim(), "k", kind, "a", f.address(), "lat", f.latitude(), "lon", f.longitude(),
+                        "sd", f.startDate(), "ed", f.endDate(), "cp", f.cardsPlanned(), "r", f.reason(), "u", u.id(),
+                        "cmp", blankText(f.campaign()), "off", blankText(f.offer())));
         addAgents(id, f.agentIds());
         long v = validations.create(new ValidationService.NewRequest(ValidationService.OUVERTURE_PDV, f.name().trim(),
-                "Ouverture d'un point de vente temporaire · " + f.startDate() + " → " + f.endDate(), null, false,
-                f.reason(), null, id), u);
+                "Ouverture d'un point de vente " + ("PROMOTIONNEL".equals(kind) ? "promotionnel (" + f.campaign().trim() + ")" : "temporaire")
+                        + " · " + f.startDate() + " → " + f.endDate(), null, false, f.reason(), null, id), u);
         db.update("UPDATE pdv SET validation_id = :v WHERE id = :id", Db.p("id", id, "v", v));
+        db.update("""
+                \sINSERT INTO pdv_session (pdv_id, session_no, start_date, end_date, status, reason, requested_by, validation_id)
+                VALUES (:p, 1, :sd, :ed, 'DEMANDE', :r, :u, :v)""",
+                Db.p("p", id, "sd", f.startDate(), "ed", f.endDate(), "r", f.reason(), "u", u.id(), "v", v));
         return get(id);
+    }
+
+    public record ReopenForm(@NotNull LocalDate startDate, @NotNull LocalDate endDate, String reason, String campaign, String offer) {}
+
+    /**
+     * Réouverture d'un point de vente temporaire ou promotionnel clos : nouvelle session, validée par l'Admin ou le DAF
+     * comme une première ouverture ; le rapprochement et la clôture repartent de zéro.
+     */
+    @PostMapping("/{id}/reopen")
+    @PreAuthorize("hasAuthority('PDV_GERER')")
+    @Transactional
+    public Map<String, Object> reopen(@PathVariable long id, @Valid @RequestBody ReopenForm f) {
+        CurrentUser u = Auth.user();
+        Map<String, Object> p = db.require("SELECT name, kind, status, session_no, campaign FROM pdv WHERE id = :id FOR UPDATE",
+                Db.p("id", id), "Point de vente introuvable");
+        if ("PERMANENT".equals(p.get("kind"))) {
+            throw ApiException.conflict("Le point de vente permanent est toujours ouvert");
+        }
+        if (!"CLOS".equals(p.get("status")) && !"REFUSE".equals(p.get("status"))) {
+            throw ApiException.conflict("Seul un point de vente clos (ou refusé) peut être rouvert");
+        }
+        if (f.endDate().isBefore(f.startDate()) || f.endDate().isBefore(LocalDate.now())) {
+            throw new ApiException("Dates invalides (fin après le début, et pas dans le passé)");
+        }
+        int no = ((Number) p.get("sessionNo")).intValue() + 1;
+        String campaign = blankText(f.campaign()) != null ? f.campaign().trim() : (String) p.get("campaign");
+        long v = validations.create(new ValidationService.NewRequest(ValidationService.OUVERTURE_PDV, (String) p.get("name"),
+                "Réouverture (session " + no + ") · " + f.startDate() + " → " + f.endDate(), null, false, f.reason(), null, id), u);
+        db.update("""
+                \sUPDATE pdv SET status = 'DEMANDE', start_date = :sd, end_date = :ed, session_no = :n, validation_id = :v, reason = :r,
+                       campaign = :cmp, offer = COALESCE(:off, offer)
+                WHERE id = :id""",
+                Db.p("id", id, "sd", f.startDate(), "ed", f.endDate(), "n", no, "v", v, "r", f.reason(), "cmp", campaign,
+                        "off", blankText(f.offer())));
+        db.update("""
+                \sINSERT INTO pdv_session (pdv_id, session_no, start_date, end_date, status, reason, requested_by, validation_id)
+                VALUES (:p, :n, :sd, :ed, 'DEMANDE', :r, :u, :v)""",
+                Db.p("p", id, "n", no, "sd", f.startDate(), "ed", f.endDate(), "r", f.reason(), "u", u.id(), "v", v));
+        journal.log("PDV_REOUVERTURE", Journal.MODIFICATIONS, "Réouverture de point de vente demandée",
+                p.get("name") + " · session " + no + " · " + f.startDate() + " → " + f.endDate(), null, null, id);
+        return get(id);
+    }
+
+    // ------------------------------------------------------------------ produits du point de vente
+
+    /** Produits vendus au point de vente : prix grand public, prix de campagne, stock sur place. */
+    List<Map<String, Object>> products(long id) {
+        return db.list("""
+                \sSELECT pr.id, pr.code, pr.name, pr.category, pr.subcategory, pr.grade, pr.pack_size, pr.pack_unit, pp.promo_price,
+                       (SELECT price FROM product_price WHERE product_id = pr.id AND profile = 'GRAND_PUBLIC') AS price,
+                       COALESCE((SELECT quantity FROM stock_level WHERE pdv_id = :id AND product_id = pr.id), 0) AS stock
+                FROM pdv_product pp JOIN product pr ON pr.id = pp.product_id WHERE pp.pdv_id = :id ORDER BY pr.category, pr.name""",
+                Db.p("id", id));
+    }
+
+    @GetMapping("/{id}/products")
+    @PreAuthorize("hasAuthority('PDV_GERER') or hasAuthority('PDV_VENDRE')")
+    public List<Map<String, Object>> productList(@PathVariable long id) {
+        return products(id);
+    }
+
+    public record ProductItem(@NotNull Long productId, Long promoPrice) {}
+
+    public record ProductsForm(@NotNull List<@Valid ProductItem> items) {}
+
+    /** Liste des produits proposés (cartes exclues : elles sont attribuées une par une). */
+    @PutMapping("/{id}/products")
+    @PreAuthorize("hasAuthority('PDV_GERER')")
+    @Transactional
+    public List<Map<String, Object>> setProducts(@PathVariable long id, @Valid @RequestBody ProductsForm f) {
+        Map<String, Object> p = db.require("SELECT name FROM pdv WHERE id = :id", Db.p("id", id), "Point de vente introuvable");
+        db.update("DELETE FROM pdv_product WHERE pdv_id = :id", Db.p("id", id));
+        for (ProductItem i : f.items()) {
+            db.update("""
+                    \sINSERT INTO pdv_product (pdv_id, product_id, promo_price)
+                    SELECT :id, pr.id, :pp FROM product pr WHERE pr.id = :p AND pr.active AND pr.category NOT IN ('CARBURANT', 'SERVICE')""",
+                    Db.p("id", id, "p", i.productId(), "pp", i.promoPrice()));
+        }
+        journal.log("PDV_PRODUITS", Journal.MODIFICATIONS, "Produits du point de vente", p.get("name") + " · " + f.items().size() + " produit(s)",
+                null, null, id);
+        return products(id);
+    }
+
+    public record StockForm(@NotNull Long stationId, @NotNull Long productId, @NotNull @jakarta.validation.constraints.Positive BigDecimal quantity,
+                            Boolean back) {}
+
+    /** Envoi de stock d'une station vers le point de vente (ou retour vers la station : back = true). */
+    @PostMapping("/{id}/stock")
+    @PreAuthorize("hasAuthority('PDV_GERER') or hasAuthority('STOCKS')")
+    @Transactional
+    public List<Map<String, Object>> transferStock(@PathVariable long id, @Valid @RequestBody StockForm f) {
+        Map<String, Object> p = db.require("SELECT name FROM pdv WHERE id = :id", Db.p("id", id), "Point de vente introuvable");
+        if (db.count("SELECT count(*) FROM pdv_product WHERE pdv_id = :id AND product_id = :p", Db.p("id", id, "p", f.productId())) == 0) {
+            throw new ApiException("Ajoutez d'abord ce produit à la liste du point de vente");
+        }
+        boolean back = Boolean.TRUE.equals(f.back());
+        String station = db.value("SELECT short_name FROM station WHERE id = :s", Db.p("s", f.stationId()), String.class);
+        String note = back ? "Retour de " + p.get("name") + " vers " + station : "Envoi de " + station + " vers " + p.get("name");
+        String ref = "TRF-PDV-" + id;
+        stock.move(back ? null : f.stationId(), back ? id : null, f.productId(), f.quantity().negate(), "TRANSFERT", ref, Auth.user().id(), note);
+        stock.move(back ? f.stationId() : null, back ? null : id, f.productId(), f.quantity(), "TRANSFERT", ref, Auth.user().id(), note);
+        journal.log("PDV_STOCK", Journal.MODIFICATIONS, back ? "Retour de stock du point de vente" : "Stock envoyé au point de vente",
+                note + " · " + f.quantity().stripTrailingZeros().toPlainString() + " × "
+                        + db.value("SELECT name FROM product WHERE id = :p", Db.p("p", f.productId()), String.class), null, f.stationId(), id);
+        return products(id);
+    }
+
+    public record ProductLine(@NotBlank String productCode, @NotNull @jakarta.validation.constraints.Positive BigDecimal quantity) {}
+
+    public record ProductSaleForm(java.util.UUID uuid, @NotEmpty List<@Valid ProductLine> lines,
+                                  @NotBlank @Pattern(regexp = "ESPECES|MOBILE_MONEY|CARTE") String paymentMethod, String paymentRef,
+                                  String cardNumber, String pin, java.time.Instant at) {}
+
+    /**
+     * Vente de produits (lubrifiants, gaz, accessoires) au point de vente : espèces, mobile money ou carte Zener (avec PIN).
+     * Idempotente (uuid) : un renvoi après une coupure n'enregistre pas deux fois la vente.
+     */
+    @PostMapping("/{id}/product-sales")
+    @PreAuthorize("hasAuthority('PDV_VENDRE')")
+    public Map<String, Object> sellProducts(@PathVariable long id, @Valid @RequestBody ProductSaleForm f) {
+        CurrentUser u = Auth.user();
+        Map<String, Object> p = db.require("SELECT status FROM pdv WHERE id = :id", Db.p("id", id), "Point de vente introuvable");
+        if (!"OUVERT".equals(p.get("status")) && !(f.at() != null && "A_CLOTURER".equals(p.get("status")))) {
+            throw ApiException.conflict("Ce point de vente n'est pas ouvert");
+        }
+        if (!"ADMIN".equals(u.role()) && db.count("SELECT count(*) FROM pdv_agent WHERE pdv_id = :p AND employee_id = :e",
+                Db.p("p", id, "e", u.id())) == 0) {
+            throw ApiException.forbidden("Vous n'êtes pas affecté à ce point de vente");
+        }
+        for (ProductLine l : f.lines()) {
+            if (db.count("""
+                    \sSELECT count(*) FROM pdv_product pp JOIN product pr ON pr.id = pp.product_id WHERE pp.pdv_id = :id AND pr.code = :c""",
+                    Db.p("id", id, "c", l.productCode())) == 0) {
+                throw new ApiException("Produit non proposé dans ce point de vente : " + l.productCode());
+            }
+        }
+        if ("MOBILE_MONEY".equals(f.paymentMethod()) && (f.paymentRef() == null || f.paymentRef().isBlank())) {
+            throw new ApiException("Référence de la transaction mobile money requise");
+        }
+        boolean card = "CARTE".equals(f.paymentMethod());
+        Map<String, Object> sale = sales.record(new SaleService.Sale(f.uuid(), null, id, "BOUTIQUE", "PDV", null,
+                f.lines().stream().map(l -> new SaleService.Line(l.productCode(), l.quantity(), false)).toList(), f.paymentMethod(),
+                f.paymentRef(), card ? f.cardNumber() : null, card ? f.pin() : null, card, u.id(), f.at(), f.at() != null, null));
+        db.update("UPDATE pdv SET last_sync_at = now() WHERE id = :p", Db.p("p", id));
+        return sale;
     }
 
     /** Modification ; la date de fin d'un point temporaire reste réglable (prolongation, fin anticipée). */
@@ -254,7 +429,7 @@ public class PdvController {
 
     // ------------------------------------------------------------------ cartes du point de vente
 
-    public record Allocation(@Pattern(regexp = "CLASSIQUE|VIP") String typeCode, @Min(1) @Max(2000) Integer quantity,
+    public record Allocation(@Pattern(regexp = "CLASSIQUE|CLUB") String typeCode, @Min(1) @Max(2000) Integer quantity,
                              List<String> numbers) {}
 
     /** Attribution de cartes vierges du stock au point de vente (par type et quantité, ou par numéros). */
@@ -316,7 +491,7 @@ public class PdvController {
 
     public record SaleForm(UUID uuid, @NotBlank String cardNumber, @NotNull @Valid HolderForm holder,
                            @NotBlank @Pattern(regexp = "ESPECES|MOBILE_MONEY") String paymentMethod, String paymentRef,
-                           java.time.Instant at) {}
+                           java.time.Instant at, Long deposit) {}
 
     @PostMapping("/{id}/sales")
     @PreAuthorize("hasAuthority('PDV_VENDRE')")
@@ -328,7 +503,7 @@ public class PdvController {
         HolderForm h = f.holder();
         return new PdvService.CardSale(f.uuid() == null ? UUID.randomUUID() : f.uuid(), f.cardNumber(),
                 new PdvService.Holder(h.name(), h.idDocType(), h.idDocNumber(), h.phone(), h.email()),
-                f.paymentMethod(), f.paymentRef(), at);
+                f.paymentMethod(), f.paymentRef(), at, f.deposit());
     }
 
     public record SyncForm(@NotEmpty List<@Valid SaleForm> operations) {}
@@ -379,6 +554,10 @@ public class PdvController {
 
     // ------------------------------------------------------------------ clôture
 
+    private static String blankText(String s) {
+        return s == null || s.isBlank() ? null : s.trim();
+    }
+
     public record ClosureForm(@NotNull @Min(0) Long countedCash, @NotNull @Min(0) Long countedMobileMoney, String note) {}
 
     /**
@@ -414,13 +593,15 @@ public class PdvController {
         long expectedMm = ((Number) r.get("expectedMobileMoney")).longValue();
         long gap = f.countedCash() + f.countedMobileMoney() - expectedCash - expectedMm;
         db.update("""
-                \sINSERT INTO pdv_closure (pdv_id, cards_allocated, cards_sold, cards_returned, expected_cash, counted_cash,
-                                         expected_mm, counted_mm, gap, note, closed_by)
-                VALUES (:p, :ca, :cs, :cr, :ec, :cc, :em, :cm, :g, :n, :u)""",
+                \sINSERT INTO pdv_closure (pdv_id, session_no, cards_allocated, cards_sold, cards_returned, expected_cash, counted_cash,
+                                         expected_mm, counted_mm, gap, note, closed_by, products_sold_amount, expected_card)
+                VALUES (:p, (SELECT session_no FROM pdv WHERE id = :p), :ca, :cs, :cr, :ec, :cc, :em, :cm, :g, :n, :u, :ps, :ecard)""",
                 Db.p("p", id, "ca", r.get("cardsAllocated"), "cs", r.get("cardsSold"), "cr", r.get("cardsReturned"),
                         "ec", expectedCash, "cc", f.countedCash(), "em", expectedMm, "cm", f.countedMobileMoney(), "g", gap,
-                        "n", f.note(), "u", u.id()));
+                        "n", f.note(), "u", u.id(), "ps", r.get("productsAmount"), "ecard", r.get("expectedCard")));
         db.update("UPDATE pdv SET status = 'CLOS' WHERE id = :p", Db.p("p", id));
+        db.update("UPDATE pdv_session SET status = 'CLOS', closed_at = now() WHERE pdv_id = :p AND session_no = (SELECT session_no FROM pdv WHERE id = :p)",
+                Db.p("p", id));
         journal.log("PDV_CLOS", Journal.VENTES_CARTES, "Point de vente clôturé",
                 p.get("name") + " · " + r.get("cardsSold") + " cartes vendues · écart " + gap + " F",
                 f.countedCash() + f.countedMobileMoney(), null, id);

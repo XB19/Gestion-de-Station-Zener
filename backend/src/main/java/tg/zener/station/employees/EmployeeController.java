@@ -32,6 +32,7 @@ import tg.zener.station.common.ApiException;
 import tg.zener.station.common.Db;
 import tg.zener.station.common.Page;
 import tg.zener.station.journal.Journal;
+import tg.zener.station.validations.SensitiveActions;
 import tg.zener.station.security.Auth;
 import tg.zener.station.security.CurrentUser;
 
@@ -52,9 +53,13 @@ public class EmployeeController {
     private final CardIssuer issuer;
     private final Journal journal;
     private final CardEvents cardEvents;
+    private final SensitiveActions sensitive;
+    private final tg.zener.station.notifications.Notifier notifier;
 
     public EmployeeController(Db db, PasswordEncoder encoder, PhotoStore photos, CardIssuer issuer, Journal journal,
-                              CardEvents cardEvents) {
+                              CardEvents cardEvents, SensitiveActions sensitive, tg.zener.station.notifications.Notifier notifier) {
+        this.sensitive = sensitive;
+        this.notifier = notifier;
         this.db = db;
         this.encoder = encoder;
         this.photos = photos;
@@ -221,7 +226,19 @@ public class EmployeeController {
 
     public record EmployeeForm(@NotBlank String firstName, @NotBlank String lastName, @Email String email, String phone,
                                @NotBlank String role, Long stationId, String idDocType, String idDocNumber,
-                               @Size(min = 8, message = "8 caractères minimum") String password) {}
+                               @Size(min = 8, message = "8 caractères minimum") String password, String reason) {}
+
+    private static final String PASSWORD_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+    private static final java.security.SecureRandom RANDOM = new java.security.SecureRandom();
+
+    /** Mot de passe provisoire (10 caractères, sans caractères ambigus). */
+    static String temporaryPassword() {
+        StringBuilder b = new StringBuilder();
+        for (int i = 0; i < 10; i++) {
+            b.append(PASSWORD_CHARS.charAt(RANDOM.nextInt(PASSWORD_CHARS.length())));
+        }
+        return b.toString();
+    }
 
     @PostMapping
     @PreAuthorize("hasAuthority('EMPLOYES')")
@@ -230,19 +247,63 @@ public class EmployeeController {
         CurrentUser u = Auth.user();
         Long station = checkForm(f, u);
         String matricule = "ZN-" + String.format("%05d", db.sum("SELECT COALESCE(max(id), 0) + 1 FROM employee", Map.of()));
+        // mise en route : sans mot de passe donné, un mot de passe provisoire est créé (à changer à la première connexion)
+        String email = blankLower(f.email());
+        String temporary = f.password() == null && email != null ? temporaryPassword() : null;
+        String password = f.password() != null ? f.password() : temporary;
+        boolean sensitiveRole = SensitiveActions.SENSITIVE_ROLES.contains(f.role());
         long id = db.insert("""
                 \sINSERT INTO employee (matricule, first_name, last_name, email, phone, password_hash, role_code, station_id,
-                                      id_doc_type, id_doc_number, created_by)
-                VALUES (:m, :fn, :ln, :e, :ph, :pw, :r, :s, :dt, :dn, :u)""",
-                Db.p("m", matricule, "fn", f.firstName().trim(), "ln", f.lastName().trim(), "e", blankLower(f.email()),
-                        "ph", blank(f.phone()), "pw", f.password() == null ? null : encoder.encode(f.password()),
-                        "r", f.role(), "s", station, "dt", blank(f.idDocType()), "dn", blank(f.idDocNumber()), "u", u.id()));
+                                      id_doc_type, id_doc_number, created_by, must_change_password, active)
+                VALUES (:m, :fn, :ln, :e, :ph, :pw, :r, :s, :dt, :dn, :u, :mc, :act)""",
+                Db.p("m", matricule, "fn", f.firstName().trim(), "ln", f.lastName().trim(), "e", email,
+                        "ph", blank(f.phone()), "pw", password == null ? null : encoder.encode(password),
+                        "r", sensitiveRole ? "COMPTABLE" : f.role(), "s", station, "dt", blank(f.idDocType()), "dn", blank(f.idDocNumber()),
+                        "u", u.id(), "mc", password != null, "act", !sensitiveRole));
         if ("GERANT".equals(f.role()) && station != null) {
             db.update("UPDATE station SET manager_id = :e WHERE id = :s AND manager_id IS NULL", Db.p("e", id, "s", station));
         }
         journal.log("EMPLOYE_CREE", Journal.MODIFICATIONS, "Employé créé",
-                f.firstName().trim() + " " + f.lastName().trim() + " · " + roleLabel(f.role()), null, station, null);
-        return get(id);
+                f.firstName().trim() + " " + f.lastName().trim() + " · " + roleLabel(f.role()) + (sensitiveRole ? " · en attente d'approbation" : ""),
+                null, station, null);
+        Map<String, Object> out = new java.util.LinkedHashMap<>(get(id));
+        if (sensitiveRole) {
+            out.put("pendingValidation", sensitive.requestSensitiveRole(id, f.role(), null, true, f.reason(), u));
+        }
+        if (temporary != null) {
+            out.put("temporaryPassword", temporary); // montré une seule fois à la personne qui crée le compte
+        }
+        if (email != null) {
+            notifier.send(new tg.zener.station.notifications.Notifier.Message("BIENVENUE", tg.zener.station.notifications.Notifier.INFO,
+                    "Bienvenue sur ZENER Station Manager", "Votre compte " + roleLabel(f.role()) + " est créé (identifiant : " + email + ")."
+                            + "\nVotre responsable vous remet votre mot de passe provisoire ; il vous sera demandé de le changer à la première connexion."
+                            + (sensitiveRole ? "\nLe compte sera ouvert après l'approbation d'une seconde personne." : ""),
+                    "/", station), List.of(id), List.of());
+        }
+        return out;
+    }
+
+    /** Liste de mise en route d'un employé (création guidée) : accès, photo, carte, première connexion, visite guidée. */
+    @GetMapping("/{id}/onboarding")
+    @PreAuthorize("hasAuthority('EMPLOYES')")
+    public Map<String, Object> onboarding(@PathVariable long id) {
+        Map<String, Object> e = load(id);
+        Map<String, Object> s = db.one("""
+                \sSELECT (password_hash IS NOT NULL) AS has_password, must_change_password, onboarded_at, active,
+                       (SELECT max(at) FROM login_attempt WHERE employee_id = e.id AND success) AS first_login
+                FROM employee e WHERE id = :id""", Db.p("id", id));
+        List<Map<String, Object>> steps = new java.util.ArrayList<>();
+        steps.add(Map.of("key", "ACCES", "label", "Accès : email et mot de passe provisoire", "done", Boolean.TRUE.equals(s.get("hasPassword"))));
+        steps.add(Map.of("key", "PHOTO", "label", "Photo (affichée sur la carte)", "done", e.get("photoUrl") != null));
+        steps.add(Map.of("key", "CARTE", "label", "Carte employé attribuée", "done", e.get("cardId") != null));
+        steps.add(Map.of("key", "CONNEXION", "label", "Première connexion et changement du mot de passe",
+                "done", s.get("firstLogin") != null && !Boolean.TRUE.equals(s.get("mustChangePassword"))));
+        steps.add(Map.of("key", "VISITE", "label", "Visite guidée du rôle", "done", s.get("onboardedAt") != null));
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("employee", e);
+        out.put("steps", steps);
+        out.put("active", s.get("active"));
+        return out;
     }
 
     @PutMapping("/{id}")
@@ -255,18 +316,30 @@ public class EmployeeController {
         if (id == u.id() && !f.role().equals(before.get("role"))) {
             throw ApiException.forbidden("Vous ne pouvez pas changer votre propre rôle");
         }
+        // passage au rôle Admin ou DAF : seulement après l'approbation d'une seconde personne
+        String role = f.role();
+        Map<String, Object> pendingRole = null;
+        if (!role.equals(before.get("role")) && SensitiveActions.SENSITIVE_ROLES.contains(role)) {
+            pendingRole = sensitive.requestSensitiveRole(id, role, (String) before.get("role"), false, f.reason(), u);
+            role = (String) before.get("role");
+        }
         db.update("""
                 \sUPDATE employee SET first_name = :fn, last_name = :ln, email = :e, phone = :ph, role_code = :r, station_id = :s,
                        id_doc_type = :dt, id_doc_number = :dn,
                        password_hash = COALESCE(:pw, password_hash)
                 WHERE id = :id""",
                 Db.p("id", id, "fn", f.firstName().trim(), "ln", f.lastName().trim(), "e", blankLower(f.email()),
-                        "ph", blank(f.phone()), "r", f.role(), "s", station, "dt", blank(f.idDocType()),
+                        "ph", blank(f.phone()), "r", role, "s", station, "dt", blank(f.idDocType()),
                         "dn", blank(f.idDocNumber()), "pw", f.password() == null ? null : encoder.encode(f.password())));
-        String change = before.get("role").equals(f.role()) ? "" : " · " + before.get("roleLabel") + " → " + roleLabel(f.role());
-        journal.log("EMPLOYE_MODIFIE", Journal.MODIFICATIONS, "Employé modifié",
-                f.firstName().trim() + " " + f.lastName().trim() + change, null, station, null);
-        return get(id);
+        String change = before.get("role").equals(role) ? "" : " · " + before.get("roleLabel") + " → " + roleLabel(role);
+        journal.audit("EMPLOYE_MODIFIE", Journal.MODIFICATIONS, "Employé modifié", f.firstName().trim() + " " + f.lastName().trim() + change,
+                Map.of("role", before.get("role"), "stationId", String.valueOf(before.get("stationId")), "email", String.valueOf(before.get("email"))),
+                Map.of("role", role, "stationId", String.valueOf(station), "email", String.valueOf(blankLower(f.email()))), f.reason(), station);
+        Map<String, Object> out = new java.util.LinkedHashMap<>(get(id));
+        if (pendingRole != null) {
+            out.put("pendingValidation", pendingRole);
+        }
+        return out;
     }
 
     /** Désactivation : l'employé ne peut plus se connecter ; son historique reste consultable. */
@@ -312,7 +385,11 @@ public class EmployeeController {
     @PreAuthorize("hasAuthority('EMPLOYES')")
     public Map<String, Object> setPassword(@PathVariable long id, @Valid @RequestBody PasswordForm f) {
         Map<String, Object> e = loadForChange(id, Auth.user());
-        db.update("UPDATE employee SET password_hash = :h WHERE id = :id", Db.p("id", id, "h", encoder.encode(f.password())));
+        // mot de passe donné par un responsable : provisoire, à changer à la prochaine connexion ; les sessions ouvertes sont fermées
+        db.update("UPDATE employee SET password_hash = :h, must_change_password = true WHERE id = :id",
+                Db.p("id", id, "h", encoder.encode(f.password())));
+        db.update("UPDATE auth_session SET revoked_at = now(), revoked_by = :u WHERE employee_id = :id AND revoked_at IS NULL",
+                Db.p("id", id, "u", Auth.user().id()));
         journal.log("MOT_DE_PASSE", Journal.MODIFICATIONS, "Mot de passe défini", (String) e.get("name"), null,
                 num(e.get("stationId")), null);
         return Map.of("ok", true);

@@ -40,9 +40,11 @@ public class DeliveryService {
     private final Journal journal;
     private final LiveFeed live;
     private final Mailer mailer;
+    private final tg.zener.station.notifications.Notifier notifier;
 
     public DeliveryService(Db db, Refs refs, Settings settings, SaleService sales, CardService cards, StockService stock,
-                           Journal journal, LiveFeed live, Mailer mailer) {
+                           Journal journal, LiveFeed live, Mailer mailer, tg.zener.station.notifications.Notifier notifier) {
+        this.notifier = notifier;
         this.db = db;
         this.refs = refs;
         this.settings = settings;
@@ -183,10 +185,9 @@ public class DeliveryService {
         journal.logAs(userId, "LIVRAISON_AFFECTEE", Journal.LIVRAISONS, "Livreur affecté",
                 d.get("ref") + " · " + agent.get("name") + (vehicle == null || vehicle.isBlank() ? "" : " · " + vehicle.trim()),
                 null, source, null);
-        if (agent.get("email") != null) {
-            mailer.queue(List.of((String) agent.get("email")), "Livraison " + d.get("ref") + " affectée",
-                    "Livraison de " + qty((BigDecimal) d.get("quantity")) + " L · " + d.get("address"), "LIVRAISON");
-        }
+        notifier.send(new tg.zener.station.notifications.Notifier.Message("LIVRAISON", "ATTENTION",
+                "Livraison " + d.get("ref") + " affectée", "Livraison de " + qty((BigDecimal) d.get("quantity")) + " L · " + d.get("address"),
+                "/mobilite", source), List.of(agentId), List.of());
         publish(get(id));
     }
 

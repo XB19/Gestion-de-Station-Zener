@@ -14,7 +14,7 @@ import { api, post, put, qs } from '../api/client.js';
 import { useSession } from '../api/session.jsx';
 import { ago, compact, exportCsv, fcfa, masked, money, num } from '../lib/format.js';
 
-const TYPE_TONE = { FLOTTE: 'blue', VIP: 'purple', CLASSIQUE: 'gray', EMPLOYE: 'green' };
+const TYPE_TONE = { FLOTTE: 'blue', CLUB: 'navy', CLASSIQUE: 'gray', EMPLOYE: 'green' };
 const TABS = [
   { key: 'ALL', label: 'Toutes les cartes' },
   { key: 'FLOTTE', label: 'Cartes flottes' },
@@ -24,45 +24,55 @@ const TABS = [
 const TECHNO = { PUCE: 'Puce', M1: 'M1' };
 const expiry = (d) => (d ? `${String(d).slice(5, 7)}/${String(d).slice(2, 4)}` : '—');
 
-/** Création d'une carte pour un titulaire (particulier ou entreprise) ; elle reste « à activer ». */
+/**
+ * Attribution d'une carte activée du stock à un titulaire (particulier ou entreprise) : la carte est active aussitôt.
+ * Carte Club : dépôt initial crédité sur la carte (200 000 F par défaut) et adhésion de 12 mois.
+ */
 export function NewCardModal({ fleet, onClose, onSaved }) {
   const notify = useToast();
   const companies = useApi('/holders?kind=ENTREPRISE');
+  const settings = useApi('/settings');
+  const [card, setCard] = useState(null);
   const [f, setF] = useState({
-    typeCode: fleet ? 'FLOTTE' : 'CLASSIQUE', techno: 'PUCE', holderId: '', kind: fleet ? 'ENTREPRISE' : 'PARTICULIER', name: '',
+    holderId: '', kind: fleet ? 'ENTREPRISE' : 'PARTICULIER', name: '',
     profile: 'GRAND_PUBLIC', idDocType: 'CNI', idDocNumber: '', phone: '', email: '', pin: '', vehiclePlate: '', vehicleLabel: '',
-    driverName: '',
+    driverName: '', deposit: '', paymentMethod: 'ESPECES', paymentRef: '',
   });
   const set = (k) => (v) => setF((x) => ({ ...x, [k]: v }));
-  const isFleet = f.typeCode === 'FLOTTE';
+  const typeCode = card?.typeCode || (fleet ? 'FLOTTE' : 'CLASSIQUE');
+  const isFleet = typeCode === 'FLOTTE';
+  const isClub = typeCode === 'CLUB';
+  const minDeposit = Number(settings.data?.['club.initial_deposit'] || 200000);
+  const cardError = card && card.status !== 'STOCK'
+    ? (card.status === 'A_ACTIVER' ? 'Cette carte n’est pas encore activée : une autre personne doit l’activer.' : `Carte ${card.statusLabel?.toLowerCase()} : pas disponible.`)
+    : null;
   return (
     <FormModal
       wide
-      title={isFleet ? 'Nouvelle carte flotte' : 'Nouvelle carte'}
-      submitLabel="Créer la carte"
+      title={isFleet ? 'Attribuer une carte flotte' : 'Attribuer une carte'}
+      submitLabel={isClub ? `Attribuer et créditer ${fcfa(f.deposit || 0)} F` : 'Attribuer la carte'}
       onClose={onClose}
       onSubmit={async () => {
+        if (!card) throw new Error('Choisissez une carte activée du stock');
+        if (cardError) throw new Error(cardError);
         const holder = f.holderId ? null : {
           kind: isFleet ? 'ENTREPRISE' : f.kind, name: f.name, profile: f.profile, idDocType: f.idDocType || null,
           idDocNumber: f.idDocNumber || null, phone: f.phone || null, email: f.email || null,
         };
-        const card = await post('/cards', {
-          holderId: f.holderId ? Number(f.holderId) : null, holder, typeCode: f.typeCode, techno: f.techno,
+        const c = await post('/cards', {
+          holderId: f.holderId ? Number(f.holderId) : null, holder, typeCode, number: card.number,
           pin: f.pin || null, vehiclePlate: f.vehiclePlate || null, vehicleLabel: f.vehicleLabel || null, driverName: f.driverName || null,
+          deposit: isClub ? Number(f.deposit) : null, paymentMethod: isClub ? f.paymentMethod : null, paymentRef: f.paymentRef || null,
         });
-        notify(`Carte ${masked(card.number)} créée · à activer par une autre personne`);
-        onSaved?.(card);
+        notify(`Carte ${masked(c.number)} attribuée et active${isClub ? ' · adhésion Club ouverte' : ''}`);
+        onSaved?.(c);
       }}
     >
-      <div className="form-grid">
-        <Field label="Type de carte">
-          <SelectInput value={f.typeCode} onChange={set('typeCode')} options={[
-            { value: 'CLASSIQUE', label: 'Classique' }, { value: 'VIP', label: 'VIP' }, { value: 'FLOTTE', label: 'Flotte (entreprise)' }]} />
-        </Field>
-        <Field label="Technologie">
-          <SelectInput value={f.techno} onChange={set('techno')} options={[{ value: 'PUCE', label: 'Carte à puce' }, { value: 'M1', label: 'M1' }]} />
-        </Field>
-        {isFleet && (
+      <Field label="Carte activée du stock" hint={cardError || (card ? `${card.typeLabel} · ${card.techno === 'M1' ? 'M1' : 'puce'}` : 'Numéro complet ou 5 derniers chiffres de la carte remise au client')}>
+        <CardPicker value={card} onChange={setCard} autoFocus />
+      </Field>
+      <div className="form-grid" style={{ marginTop: 12 }}>
+        {(isFleet || f.kind === 'ENTREPRISE') && (
           <Field label="Entreprise existante" full>
             <SelectInput value={f.holderId} onChange={set('holderId')} placeholder="Nouvelle entreprise…"
               options={(companies.data || []).map((h) => ({ value: h.id, label: h.name }))} />
@@ -83,13 +93,25 @@ export function NewCardModal({ fleet, onClose, onSaved }) {
             </Field>
             <Field label="Numéro de la pièce"><TextInput value={f.idDocNumber} onChange={set('idDocNumber')} required={!isFleet && f.kind === 'PARTICULIER'} /></Field>
             <Field label="Téléphone"><TextInput value={f.phone} onChange={set('phone')} /></Field>
-            <Field label="Email"><TextInput value={f.email} onChange={set('email')} type="email" /></Field>
+            <Field label="Email" hint={isClub ? 'Pour les rappels d’échéance Club' : undefined}><TextInput value={f.email} onChange={set('email')} type="email" /></Field>
             <Field label="Profil de prix">
               <SelectInput value={f.profile} onChange={set('profile')} options={[{ value: 'GRAND_PUBLIC', label: 'Grand public' }, { value: 'PARTENAIRE', label: 'Partenaire' }]} />
             </Field>
           </>
         )}
         <Field label="Code PIN (4 à 6 chiffres)"><TextInput value={f.pin} onChange={set('pin')} inputMode="numeric" pattern="[0-9]{4,6}" /></Field>
+        {isClub && (
+          <>
+            <Field label="Dépôt initial crédité (F)" hint={`Minimum ${fcfa(minDeposit)} F, en plus du prix de la carte`}>
+              <TextInput type="number" min={minDeposit} step="10000" value={f.deposit} onChange={set('deposit')} required />
+            </Field>
+            <Field label="Paiement">
+              <SelectInput value={f.paymentMethod} onChange={set('paymentMethod')} options={[{ value: 'ESPECES', label: 'Espèces' },
+                { value: 'MOBILE_MONEY', label: 'Mobile money' }, { value: 'VIREMENT', label: 'Virement' }, { value: 'CARTE_BANCAIRE', label: 'Carte bancaire' }]} />
+            </Field>
+            <Field label="Référence du paiement"><TextInput value={f.paymentRef} onChange={set('paymentRef')} /></Field>
+          </>
+        )}
         {isFleet && (
           <>
             <Field label="Immatriculation"><TextInput value={f.vehiclePlate} onChange={set('vehiclePlate')} placeholder="TG 4521 BK" /></Field>
@@ -99,9 +121,74 @@ export function NewCardModal({ fleet, onClose, onSaved }) {
         )}
       </div>
       <div className="muted" style={{ fontSize: 13, marginTop: 12 }}>
-        Anti-fraude : la carte devra être activée par une autre personne que vous.
+        Seules les cartes activées (par une autre personne que celle qui a créé le lot) s'attribuent.
       </div>
     </FormModal>
+  );
+}
+
+/** Lot de cartes numérotées ; « déjà actives » si l'activation physique est faite (une autre personne confirme). */
+function BatchModal({ onClose, onSaved }) {
+  const notify = useToast();
+  const [f, setF] = useState({ typeCode: 'CLASSIQUE', techno: 'PUCE', quantity: '100', alreadyActive: false });
+  const set = (k) => (v) => setF((x) => ({ ...x, [k]: v }));
+  return (
+    <FormModal title="Lot de cartes" submitLabel="Créer le lot" onClose={onClose} onSubmit={async () => {
+      const r = await post('/cards/batches', { ...f, quantity: Number(f.quantity) });
+      notify(`${r.quantity} cartes créées · à ${f.alreadyActive ? 'confirmer' : 'activer'} par une autre personne`);
+      onSaved();
+    }}>
+      <div className="form-grid">
+        <Field label="Type"><SelectInput value={f.typeCode} onChange={set('typeCode')} options={[{ value: 'CLASSIQUE', label: 'Classique' },
+          { value: 'CLUB', label: 'Club (carte noire)' }, { value: 'FLOTTE', label: 'Flotte' }, { value: 'EMPLOYE', label: 'Employé' }]} /></Field>
+        <Field label="Technologie"><SelectInput value={f.techno} onChange={set('techno')} options={[{ value: 'PUCE', label: 'Carte à puce' }, { value: 'M1', label: 'M1' }]} /></Field>
+        <Field label="Quantité"><TextInput type="number" min="1" max="5000" value={f.quantity} onChange={set('quantity')} required /></Field>
+        <Field label="Activation physique">
+          <SelectInput value={f.alreadyActive ? 'oui' : 'non'} onChange={(v) => set('alreadyActive')(v === 'oui')}
+            options={[{ value: 'non', label: 'Pas encore faite' }, { value: 'oui', label: 'Déjà faite (cartes déjà actives)' }]} />
+        </Field>
+      </div>
+      <div className="muted" style={{ fontSize: 13, marginTop: 12 }}>
+        Anti-fraude : le lot n'est utilisable qu'après l'activation (ou la confirmation) par une autre personne que vous.
+      </div>
+    </FormModal>
+  );
+}
+
+/** Lots en attente d'activation, activables d'un coup par une autre personne que leur créateur. */
+function PendingBatches({ onActivated }) {
+  const notify = useToast();
+  const { user, can } = useSession();
+  const batches = useApi('/cards/batches');
+  const pending = (batches.data || []).filter((b) => b.toActivate > 0);
+  if (!pending.length) return null;
+  const activate = async (b) => {
+    try {
+      const r = await post(`/cards/batches/${b.id}/activate`);
+      notify(`${r.activated} carte(s) activée(s) · disponibles pour l'attribution`);
+      batches.reload();
+      onActivated();
+    } catch (e) {
+      notify(e.message, 'error');
+    }
+  };
+  return (
+    <div style={{ marginTop: 16, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+      <div className="section-label">Lots à activer</div>
+      {pending.map((b) => (
+        <div key={b.id} className="row between" style={{ padding: '6px 0' }}>
+          <span>
+            <span className="strong">{b.typeCode === 'CLUB' ? 'Club' : b.typeCode.toLowerCase()} · {b.toActivate} carte(s)</span>
+            <span className="muted"> · dès {b.firstNumber} · créé par {b.createdByName}{b.physicallyActive ? ' · déjà actives (à confirmer)' : ''}</span>
+          </span>
+          {can('CARTES_ACTIVER') && (
+            b.createdBy === user.id
+              ? <span className="muted" style={{ fontSize: 12.5 }}>Une autre personne doit l'activer</span>
+              : <Button size="sm" variant="success" icon={ShieldCheck} onClick={() => activate(b)}>{b.physicallyActive ? 'Confirmer' : 'Activer'} le lot</Button>
+          )}
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -193,11 +280,12 @@ export default function Cartes() {
     <>
       <PageHeader
         title="Cartes"
-        subtitle="Cartes classiques, VIP et flottes · cartes à puce et M1 prises en charge"
+        subtitle="Cartes classiques, Club et flottes · cartes à puce et M1 · activées avant d'être attribuées"
         actions={
           <>
             {can('RECHARGER') && <Button icon={Wallet} onClick={() => navigate('/rechargements')}>Rechargement</Button>}
-            {can('CARTES_GERER') && <Button variant="primary" icon={Plus} onClick={() => setModal({ type: 'new' })}>Nouvelle carte</Button>}
+            {can('CARTES_GERER') && <Button icon={Package} onClick={() => setModal({ type: 'batch' })}>Lot de cartes</Button>}
+            {can('CARTES_GERER') && <Button variant="primary" icon={Plus} onClick={() => setModal({ type: 'new' })}>Attribuer une carte</Button>}
           </>
         }
       />
@@ -262,7 +350,8 @@ export default function Cartes() {
         </div>
         <div className="row" style={{ marginTop: 20, gap: 0, rowGap: 14, flexWrap: 'wrap' }}>
           {[
-            [Package, 'gray', 'En stock', s?.inStock],
+            [ShieldCheck, 'orange', 'À activer', s?.stockToActivate],
+            [Package, 'gray', 'En stock (activées)', s?.inStock],
             [Store, 'orange', 'Attribuées à un PDV', s?.atPdv],
             [Banknote, 'blue', 'Vendues', s?.sold],
             [CircleCheck, 'green', 'Actives', s?.active],
@@ -277,6 +366,7 @@ export default function Cartes() {
             </div>
           ))}
         </div>
+        <PendingBatches onActivated={() => { summary.reload(); list.reload(); }} />
       </Card>
 
       {/* Liste */}
@@ -293,14 +383,14 @@ export default function Cartes() {
         <div className="filters">
           <SearchInput icon={Search} placeholder="N° de carte, titulaire, immatriculation…" style={{ width: 260 }} value={q} onChange={(e) => setQ(e.target.value)} />
           <Select icon={Layers} value={filters.type} onChange={setFilter('type')} placeholder="Type"
-            options={[{ value: 'CLASSIQUE', label: 'Classique' }, { value: 'VIP', label: 'VIP' }, { value: 'FLOTTE', label: 'Flotte' }, { value: 'EMPLOYE', label: 'Employé' }]} />
+            options={[{ value: 'CLASSIQUE', label: 'Classique' }, { value: 'CLUB', label: 'Club' }, { value: 'FLOTTE', label: 'Flotte' }, { value: 'EMPLOYE', label: 'Employé' }]} />
           <Select icon={CircleDot} value={filters.status} onChange={setFilter('status')} placeholder="Statut"
             options={[{ value: 'ACTIVE', label: 'Active' }, { value: 'A_ACTIVER', label: 'À activer' }, { value: 'BLOQUEE', label: 'Bloquée' },
               { value: 'INACTIVE', label: 'Inactive' }, { value: 'STOCK', label: 'En stock' }, { value: 'PDV', label: 'En point de vente' }]} />
           <Select icon={Cpu} value={filters.techno} onChange={setFilter('techno')} placeholder="Technologie"
             options={[{ value: 'PUCE', label: 'Puce' }, { value: 'M1', label: 'M1' }]} />
           <div className="row" style={{ marginLeft: 'auto', gap: 8 }}>
-            {can('CARTES_GERER') && <Button icon={Building2} onClick={() => setModal({ type: 'new', fleet: true })}>Créer une carte flotte</Button>}
+            {can('CARTES_GERER') && <Button icon={Building2} onClick={() => setModal({ type: 'new', fleet: true })}>Attribuer une carte flotte</Button>}
             <Button icon={Download} disabled={!list.data?.items.length} onClick={() => exportCsv('cartes.csv', [
               { label: 'Numéro', value: 'numberFormatted' }, { label: 'Titulaire', value: 'holderName' }, { label: 'Groupe', value: 'groupName' },
               { label: 'Type', value: 'typeLabel' }, { label: 'Techno', value: 'techno' }, { label: 'Solde (F)', value: 'balance' },
@@ -348,6 +438,9 @@ export default function Cartes() {
 
       {modal?.type === 'new' && (
         <NewCardModal fleet={modal.fleet} onClose={() => setModal(null)} onSaved={(card) => { list.reload(); summary.reload(); navigate(`/cartes/${card.id}`); }} />
+      )}
+      {modal?.type === 'batch' && (
+        <BatchModal onClose={() => setModal(null)} onSaved={() => { list.reload(); summary.reload(); }} />
       )}
       {modal?.type === 'prices' && <PricesModal types={s.types} onClose={() => setModal(null)} onSaved={summary.reload} />}
     </>

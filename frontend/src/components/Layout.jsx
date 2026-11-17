@@ -3,7 +3,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import {
   LayoutGrid, Fuel, Store, CreditCard, Wallet, ShieldCheck, ShoppingCart, Users, Building2,
   FileBarChart, ScrollText, Settings, LogOut, Search, Bell, ChevronDown, Globe, TriangleAlert, Truck, Timer, Database, CarFront,
-  PackagePlus,
+  PackagePlus, SearchCheck, Wrench, Rocket, BellRing, CheckCheck,
 } from 'lucide-react';
 import ZenerLogo from './ZenerLogo.jsx';
 import { Avatar, IcoBox } from './ui.jsx';
@@ -32,6 +32,7 @@ const NAV = [
       { to: '/flottes', label: 'Flottes', icon: CarFront, rights: ['FLOTTES'] },
       { to: '/validations', label: 'Validations', icon: ShieldCheck, badge: true,
         rights: ['VALIDER_MONTANTS', 'PDV_VALIDER', 'RECHARGER', 'TRANSACTIONS'] },
+      { to: '/controles', label: 'Contrôles', icon: SearchCheck, rights: ['CONTROLES'] },
     ],
   },
   {
@@ -41,6 +42,7 @@ const NAV = [
       { to: '/ventes-stocks', label: 'Ventes & stocks', icon: ShoppingCart,
         rights: ['STOCKS', 'VENTES_BOUTIQUE', 'TRANSACTIONS', 'PRIX', 'VENTES_POMPE'] },
       { to: '/approvisionnement', label: 'Approvisionnement', icon: PackagePlus, rights: ['APPROVISIONNEMENT', 'STOCKS', 'PRIX'] },
+      { to: '/atelier', label: 'Atelier', icon: Wrench, rights: ['ATELIER'] },
     ],
   },
   {
@@ -56,6 +58,7 @@ const NAV = [
       { to: '/rapports', label: 'Rapports', icon: FileBarChart, rights: ['RAPPORTS'] },
       { to: '/journal', label: "Journal d'opérations", icon: ScrollText, rights: ['JOURNAL'] },
       { to: '/extractions', label: 'Extractions', icon: Database, rights: ['EXTRACTIONS'] },
+      { to: '/mise-en-route', label: 'Mise en route', icon: Rocket, rights: ['PARAMETRES'] },
     ],
   },
 ];
@@ -255,52 +258,76 @@ function StationPicker() {
   );
 }
 
-/** Alertes : validations en attente et alertes de stock ouvertes. */
+const PRIORITY_TONE = { CRITIQUE: 'red', URGENT: 'orange', ATTENTION: 'orange', INFO: 'blue' };
+
+/** Cloche : notifications de l'utilisateur (validations, cuves, contrôles, rappels…), lues ou non. */
 function Notifications() {
   const navigate = useNavigate();
-  const { can } = useSession();
   const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
   const box = useRef(null);
   useOutside(box, () => setOpen(false));
-  const alerts = useApi('/stock/alerts');
-  const validations = useApi(can('VALIDER_MONTANTS', 'PDV_VALIDER') ? '/validations?status=EN_ATTENTE&size=5' : null);
+  const summary = useApi('/notifications/summary');
+  const list = useApi(open ? '/notifications?size=15' : null);
   useLiveReload(() => {
-    alerts.reload();
-    validations.reload();
-  }, ['alert', 'operation'], 5000);
-  const a = alerts.data || [];
-  const v = validations.data?.items || [];
-  const count = a.length + (validations.data?.total || 0);
+    summary.reload();
+    if (open) list.reload();
+  }, ['notification', 'alert'], 1500);
+  const unread = summary.data?.unread || 0;
+  const urgent = summary.data?.urgent || 0;
+  const items = list.data?.items || [];
+  const openItem = async (n) => {
+    setOpen(false);
+    if (!n.readAt) {
+      try {
+        await api(`/notifications/${n.id}/read`, { method: 'POST' });
+      } catch {
+        /* lu plus tard */
+      }
+      summary.reload();
+    }
+    if (n.link) navigate(n.link);
+  };
+  const readAll = async () => {
+    setBusy(true);
+    try {
+      await api('/notifications/read-all', { method: 'POST' });
+      summary.reload();
+      list.reload();
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <div ref={box} style={{ position: 'relative' }}>
-      <button className="icon-btn" title="Notifications" onClick={() => setOpen(!open)}>
+      <button className="icon-btn" title={unread ? `${unread} notification(s) non lue(s)` : 'Notifications'} onClick={() => setOpen(!open)}>
         <Bell size={18} strokeWidth={1.8} />
-        {count > 0 && <span className="dot" />}
+        {unread > 0 && (
+          <span style={{ position: 'absolute', top: 2, right: 2, minWidth: 16, height: 16, borderRadius: 8, padding: '0 4px', fontSize: 10.5,
+            fontWeight: 700, lineHeight: '16px', color: '#fff', background: urgent ? 'var(--red)' : 'var(--primary)' }}>
+            {unread > 99 ? '99+' : unread}
+          </span>
+        )}
       </button>
       {open && (
-        <div className="dropdown" style={{ width: 380 }}>
-          {v.length > 0 && <div className="dd-section">Validations en attente</div>}
-          {v.map((r) => (
-            <button key={`v${r.id}`} className="dd-item" onClick={() => { setOpen(false); navigate(`/validations?id=${r.id}`); }}>
-              <IcoBox icon={ShieldCheck} tone="orange" size={30} />
-              <span style={{ flex: 1 }}>
-                <div className="strong">{r.beneficiary}</div>
-                <div className="muted" style={{ fontSize: 12.5 }}>{r.statusLabel} · {ago(r.requestedAt)}</div>
+        <div className="dropdown" style={{ width: 400, maxHeight: 520, overflow: 'auto' }}>
+          <div className="row between" style={{ padding: '8px 12px' }}>
+            <span className="strong">Notifications</span>
+            {unread > 0 && <button className="link-more" disabled={busy} onClick={readAll} title="Tout marquer comme lu"><CheckCheck size={16} /> Tout lu</button>}
+          </div>
+          {items.length === 0 && <div className="muted" style={{ padding: '6px 12px 12px' }}>{list.loading ? 'Chargement…' : 'Aucune notification'}</div>}
+          {items.map((n) => (
+            <button key={n.id} className="dd-item" onClick={() => openItem(n)} style={{ alignItems: 'flex-start', opacity: n.readAt ? 0.65 : 1 }}>
+              <IcoBox icon={n.kind?.startsWith('CUVE') || n.kind === 'ALERTE_STOCK' ? TriangleAlert : n.kind === 'VALIDATION' || n.kind === 'ADMIN_DEMANDE' ? ShieldCheck : BellRing}
+                tone={PRIORITY_TONE[n.priority] || 'blue'} size={30} />
+              <span style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
+                <div className={n.readAt ? '' : 'strong'} style={{ fontSize: 13.5 }}>{n.title}</div>
+                {n.body && <div className="muted" style={{ fontSize: 12.5, marginTop: 2, whiteSpace: 'pre-line', maxHeight: 54, overflow: 'hidden' }}>{n.body}</div>}
+                <div className="muted" style={{ fontSize: 11.5, marginTop: 3 }}>{n.kindLabel || n.kind}{n.stationName ? ` · ${n.stationName}` : ''} · {ago(n.createdAt)}</div>
               </span>
-              <span className="num strong">{r.amount ? money(r.amount) : ''}</span>
+              {!n.readAt && <span style={{ width: 8, height: 8, borderRadius: 4, background: 'var(--primary)', marginTop: 6 }} />}
             </button>
           ))}
-          <div className="dd-section">Alertes de stock ({a.length})</div>
-          {a.slice(0, 8).map((x) => (
-            <button key={`a${x.id}`} className="dd-item" onClick={() => { setOpen(false); navigate('/ventes-stocks'); }}>
-              <IcoBox icon={TriangleAlert} tone={x.severity === 'CRITIQUE' ? 'red' : 'orange'} size={30} />
-              <span style={{ flex: 1 }}>
-                <div className="strong">{x.productName} · {x.place}</div>
-                <div className="muted" style={{ fontSize: 12.5 }}>{x.severity === 'CRITIQUE' ? 'Critique' : 'Bas'} · {ago(x.raisedAt)}</div>
-              </span>
-            </button>
-          ))}
-          {a.length === 0 && <div className="muted" style={{ padding: '6px 12px 12px' }}>Aucune alerte</div>}
         </div>
       )}
     </div>

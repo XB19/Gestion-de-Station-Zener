@@ -1,4 +1,4 @@
-import {
+import { ShieldAlert,
   Fuel, Wallet, ShieldCheck, CreditCard, ArrowLeftRight, Flame, Mail, Pencil, Building2, CloudOff, Wifi, WifiOff, LogIn,
   ShoppingCart, Truck, CircleCheck, CircleX, Ban, Users, FileBarChart, Package, Coins, MapPin, Download,
 } from 'lucide-react';
@@ -45,6 +45,7 @@ const BY_CATEGORY = {
   SYSTEME: [Wifi, 'gray'],
   LIVRAISONS: [Truck, 'teal'],
   EXTRACTIONS: [Download, 'navy'],
+  SECURITE: [ShieldAlert, 'red'],
 };
 
 export function operationIcon(op) {
@@ -63,6 +64,7 @@ export const CATEGORY_LABELS = {
   SYSTEME: 'Système',
   LIVRAISONS: 'Livraisons',
   EXTRACTIONS: 'Extractions',
+  SECURITE: 'Sécurité',
 };
 
 export const CATEGORY_COLORS = {
@@ -75,4 +77,5 @@ export const CATEGORY_COLORS = {
   SYSTEME: '#cbd5e1',
   LIVRAISONS: '#13917d',
   EXTRACTIONS: '#475569',
+  SECURITE: '#e5484d',
 };

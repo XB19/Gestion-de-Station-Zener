@@ -30,6 +30,11 @@ public class ValidationController {
                         ELSE 'Attente ' || CASE WHEN 'DAF' = ANY(cur.roles) AND NOT 'ADMIN' = ANY(cur.roles) THEN 'DAF'
                                                 WHEN 'COMPTABLE' = ANY(cur.roles) THEN 'Comptable' ELSE 'Admin / DAF' END
                    END AS status_label,
+                   CASE v.kind WHEN 'RECHARGE' THEN 'Recharge' WHEN 'RECHARGE_MASSE' THEN 'Recharge en masse'
+                        WHEN 'OUVERTURE_PDV' THEN 'Point de vente' WHEN 'DROITS_ROLE' THEN 'Droits d''un rôle'
+                        WHEN 'PARAMETRES' THEN 'Paramètres financiers' WHEN 'AJUSTEMENT_SOLDE' THEN 'Ajustement de solde'
+                        WHEN 'COMPTE_SENSIBLE' THEN 'Compte Admin / DAF' ELSE v.kind END AS kind_label,
+                   (v.kind IN ('DROITS_ROLE', 'PARAMETRES', 'AJUSTEMENT_SOLDE', 'COMPTE_SENSIBLE')) AS sensitive,
                    (SELECT string_agg(de.first_name || ' ' || left(de.last_name, 1) || '.', ' · ' ORDER BY st.step_no)
                     FROM validation_step st JOIN employee de ON de.id = st.decided_by WHERE st.request_id = v.id) AS deciders
             FROM validation_request v
@@ -87,6 +92,7 @@ public class ValidationController {
         v.put("steps", db.list("""
                 \sSELECT st.step_no, st.roles, st.status, st.decided_at, st.comment,
                        e.first_name || ' ' || e.last_name AS decided_by_name,
+                       (SELECT df.first_name || ' ' || df.last_name FROM employee df WHERE df.id = st.delegated_from) AS delegated_from_name,
                        upper(left(e.first_name, 1) || left(e.last_name, 1)) AS initials,
                        CASE WHEN e.photo_path IS NULL THEN NULL ELSE '/files/' || e.photo_path END AS photo_url,
                        (SELECT string_agg(a.first_name || ' ' || a.last_name, ', ')
@@ -104,6 +110,7 @@ public class ValidationController {
                     \sSELECT id, name, address, start_date, end_date, cards_planned, reason FROM pdv WHERE validation_id = :id""",
                     Db.p("id", id)));
         }
+        v.put("payload", db.value("SELECT payload::text FROM validation_request WHERE id = :id", Db.p("id", id), String.class));
         v.put("aboveThreshold", v.get("amount") != null && ((Number) v.get("amount")).longValue() > validations.threshold());
         v.put("canDecide", canDecide(v));
         return v;
@@ -115,7 +122,12 @@ public class ValidationController {
             return false;
         }
         Long requester = db.value("SELECT requested_by FROM validation_request WHERE id = :id", Db.p("id", v.get("id")), Long.class);
-        return requester != null && requester != u.id() && ((List<?>) v.get("awaitingRoles")).contains(u.role());
+        if (requester == null) {
+            return false;
+        }
+        String[] roles = ((List<?>) v.get("awaitingRoles")).stream().map(String::valueOf).toArray(String[]::new);
+        Long amount = v.get("amount") == null ? null : ((Number) v.get("amount")).longValue();
+        return validations.authority(u, (String) v.get("kind"), roles, amount, requester) != null;
     }
 
     public record Decision(String comment) {}

@@ -429,7 +429,7 @@ public class ExtractionCatalog {
                         + " " + payment("x.payment_method") + " AS payment,"
                         + " CASE WHEN c.id IS NULL THEN NULL ELSE " + cardNo("c") + " END AS card, h.name AS holder,"
                         + " CASE x.buyer_profile WHEN 'GRAND_PUBLIC' THEN 'Grand public' WHEN 'EMPLOYE_STATION' THEN 'Employé station'"
-                        + " WHEN 'EMPLOYE_GROUPE' THEN 'Employé groupe' WHEN 'PARTENAIRE' THEN 'Partenaire' ELSE x.buyer_profile END AS profile,"
+                        + " WHEN 'EMPLOYE_GROUPE' THEN 'Employé groupe' WHEN 'PARTENAIRE' THEN 'Partenaire' WHEN 'CLUB' THEN 'Club' ELSE x.buyer_profile END AS profile,"
                         + " CASE x.mode WHEN 'AUTONOME' THEN 'Autonome' WHEN 'CONVENTIONNEL' THEN 'Conventionnel' END AS mode,"
                         + " " + person("e") + " AS operator, " + SHIFT_LABEL + " AS shift")
                 .from("""

@@ -52,6 +52,135 @@ public class DemoExtras {
     /** Après les cuves (les commandes passées sont reliées aux réceptions). */
     public void ensureAfterTanks() {
         step("fournisseurs", "SELECT count(*) FROM supplier", this::suppliers);
+        step("gérance libre", "SELECT count(*) FROM station_concession", this::concessions);
+        step("produits des points de vente", "SELECT count(*) FROM pdv_product", this::pdvProducts);
+        step("atelier", "SELECT count(*) FROM work_order", this::workshop);
+        step("délégation", "SELECT count(*) FROM validation_delegation", this::delegation);
+    }
+
+    // ------------------------------------------------------------------ réunion du 17 novembre : gérance, PDV, atelier, délégation
+
+    /** Exploitants et contrats des stations en gérance libre (Kpalimé : contrat qui se termine bientôt). */
+    private void concessions() {
+        long admin = admin();
+        Object[][] rows = {
+                {"ST-002", "Komla Amegah", "Ets Amegah & Fils", "+228 90 12 45 78", "RCCM TG-LOM-2015-A-2201", "GL-2024-002", 900, 18, "COMMISSION_LITRE", 15},
+                {"ST-004", "Kodjo Agbenyo", "Sté Kodjo Services", "+228 91 22 03 44", "RCCM TG-LOM-2018-B-0777", "GL-2023-004", 1100, 34, "LOYER_FIXE", 0},
+                {"ST-006", "Afi Mensah", "Ets Mensah", "+228 92 54 11 09", "RCCM TG-KPA-2019-A-0102", "GL-2022-006", 1400, 1, "MIXTE", 12},
+                {"ST-008", "Yawo Agbeko", "Agbeko Pétrole", "+228 93 40 66 21", "RCCM TG-ATK-2020-B-0040", "GL-2024-008", 500, 210, "COMMISSION_LITRE", 14},
+                {"ST-011", "Issa Tchakoura", "Sté Savanes Énergie", "+228 97 18 30 52", "RCCM TG-DAP-2021-B-0019", "GL-2025-011", 300, 400, "POURCENTAGE_CA", 0}};
+        for (Object[] r : rows) {
+            Long station = db.value("SELECT id FROM station WHERE code = :c", Db.p("c", r[0]), Long.class);
+            if (station == null) {
+                continue;
+            }
+            int age = (Integer) r[6];
+            int left = (Integer) r[7];
+            String kind = (String) r[8];
+            db.update("""
+                    \sINSERT INTO station_concession (station_id, operator_name, operator_company, operator_phone, operator_id_doc, contract_ref,
+                                                    contract_start, contract_end, fee_kind, fee_amount, commission_per_liter, revenue_pct,
+                                                    deposit_amount, equipment_zener, equipment_operator, staff_by_operator, updated_by)
+                    VALUES (:s, :n, :c, :ph, :doc, :ref, current_date - make_interval(days => :age), current_date + make_interval(days => :left),
+                            :k, :fee, :cpl, :pct, :dep, 'Cuves, pistolets, hub et lecteur de cartes', 'Boutique, groupe électrogène', true, :u)""",
+                    Db.p("s", station, "n", r[1], "c", r[2], "ph", r[3], "doc", r[4], "ref", r[5], "age", age, "left", left, "k", kind,
+                            "fee", "LOYER_FIXE".equals(kind) || "MIXTE".equals(kind) ? 450_000L : null,
+                            "cpl", "COMMISSION_LITRE".equals(kind) || "MIXTE".equals(kind) ? java.math.BigDecimal.valueOf((Integer) r[9]) : null,
+                            "pct", "POURCENTAGE_CA".equals(kind) ? java.math.BigDecimal.valueOf(4.5) : null, "dep", 2_000_000L, "u", admin));
+            for (int d : new int[] {60, 30, 7}) {
+                db.update("""
+                        \sINSERT INTO reminder (kind, ref_type, ref_id, due_on, priority, title, body, link, station_id)
+                        SELECT 'CONTRAT', 'CONTRAT', :s, contract_end - :d, CASE WHEN :d <= 7 THEN 'URGENT' ELSE 'ATTENTION' END,
+                               'Contrat de gérance : fin dans ' || :d || ' jours · ' || s.name,
+                               'Le contrat de gérance libre de ' || sc.operator_name || ' se termine le ' || sc.contract_end || '.',
+                               '/stations/' || s.id, s.id
+                        FROM station_concession sc JOIN station s ON s.id = sc.station_id
+                        WHERE sc.station_id = :s AND sc.contract_end - :d >= current_date - 1
+                        ON CONFLICT DO NOTHING""", Db.p("s", station, "d", d));
+            }
+        }
+    }
+
+    /** Le PDV du siège vend aussi des lubrifiants et du gaz ; le stand Agro-Plus est un point promotionnel. */
+    private void pdvProducts() {
+        long admin = admin();
+        Long siege = db.value("SELECT id FROM pdv WHERE kind = 'PERMANENT' ORDER BY id LIMIT 1", Map.of(), Long.class);
+        Long hq = db.value("SELECT id FROM station WHERE code = 'ST-001'", Map.of(), Long.class);
+        if (siege != null) {
+            for (String code : List.of("HUILE_15W40_1L", "HUILE_15W40_5L", "HUILE_5W30_5L", "HUILE_2T_1L", "LIQUIDE_FREIN", "GRAISSE_1KG", "BRULEUR_GAZ")) {
+                db.update("""
+                        \sINSERT INTO pdv_product (pdv_id, product_id) SELECT :p, id FROM product WHERE code = :c ON CONFLICT DO NOTHING""",
+                        Db.p("p", siege, "c", code));
+                db.update("""
+                        \sINSERT INTO stock_level (pdv_id, product_id, quantity) SELECT :p, id, 24 FROM product WHERE code = :c
+                        ON CONFLICT (pdv_id, product_id) WHERE pdv_id IS NOT NULL DO NOTHING""", Db.p("p", siege, "c", code));
+            }
+        }
+        // stock des nouveaux lubrifiants dans les stations
+        db.update("""
+                \sINSERT INTO stock_level (station_id, product_id, quantity, threshold_manual)
+                SELECT s.id, p.id, CASE WHEN p.pack_size >= 20 THEN 6 ELSE 30 END, CASE WHEN p.pack_size >= 20 THEN 2 ELSE 8 END
+                FROM station s CROSS JOIN product p
+                WHERE s.active AND p.category = 'LUBRIFIANT' AND p.code NOT IN ('HUILE_DIESEL_208L')
+                ON CONFLICT (station_id, product_id) WHERE station_id IS NOT NULL DO NOTHING""", Map.of());
+        Long stand = db.value("SELECT id FROM pdv WHERE name = 'Stand Agro-Plus'", Map.of(), Long.class);
+        if (stand != null) {
+            db.update("UPDATE pdv SET kind = 'PROMOTIONNEL', campaign = 'Campagne partenaire Agro-Plus', offer = 'Carte classique à 500 F' WHERE id = :p",
+                    Db.p("p", stand));
+            db.update("""
+                    \sINSERT INTO pdv_product (pdv_id, product_id, promo_price) SELECT :p, id, 500 FROM product WHERE code = 'CARTE_CLASSIQUE'
+                    ON CONFLICT DO NOTHING""", Db.p("p", stand));
+        }
+        if (hq != null && admin > 0) {
+            db.update("UPDATE pdv SET session_started_at = COALESCE(session_started_at, created_at)", Map.of());
+        }
+    }
+
+    /** Quelques ordres de travail à l'atelier d'Agoè : un payé, un en cours, un terminé à encaisser. */
+    private void workshop() {
+        Long station = db.value("SELECT id FROM station WHERE code = 'ST-001'", Map.of(), Long.class);
+        Long chef = db.value("SELECT id FROM employee WHERE role_code = 'CHEF_POSTE' AND station_id = :s AND active ORDER BY id LIMIT 1",
+                Db.p("s", station), Long.class);
+        if (station == null || chef == null) {
+            return;
+        }
+        Object[][] orders = {
+                {"TG 3321 AB", "Toyota", "Corolla", "Adjoa Kodjo", "+228 90 44 12 33", 84_250, "VIDANGE,FILTRES", "PAYE", 5000, "HUILE_15W40_5L", 1},
+                {"TG 7710 BC", "Isuzu", "NPR", "Lomé Logistique", "+228 22 26 70 70", 212_400, "VIDANGE,GRAISSAGE", "EN_COURS", 8000, "HUILE_DIESEL_20L", 1},
+                {"TG 1288 AZ", "Hyundai", "Accent", "Kossi Dogbe", "+228 91 07 58 64", 56_900, "LAVAGE,DIAGNOSTIC", "TERMINE", 4000, "LIQUIDE_REFROID", 2}};
+        int n = 0;
+        for (Object[] o : orders) {
+            long vehicle = db.insert("""
+                    \sINSERT INTO vehicle (plate, brand, model, owner_name, owner_phone, odometer_km) VALUES (:p, :b, :m, :on, :op, :km)""",
+                    Db.p("p", o[0], "b", o[1], "m", o[2], "on", o[3], "op", o[4], "km", o[5]));
+            String status = (String) o[7];
+            long id = db.insert("""
+                    \sINSERT INTO work_order (ref, station_id, vehicle_id, customer_name, customer_phone, odometer_km, services, status, technician_id,
+                                            labour_amount, next_service_km, opened_by, opened_at, started_at, finished_at)
+                    VALUES ('OT-' || extract(year FROM now()) || '-' || nextval('ref_work_order_seq'), :s, :v, :cn, :cp, :km, :sv, 'OUVERT', :t,
+                            :la, :km + 5000, :t, now() - make_interval(hours => :h), now() - make_interval(hours => :h - 1),
+                            CASE WHEN :st IN ('TERMINE', 'PAYE') THEN now() - make_interval(hours => GREATEST(:h - 2, 0)) END)""",
+                    Db.p("s", station, "v", vehicle, "cn", o[3], "cp", o[4], "km", o[5], "sv", db.array("text", ((String) o[6]).split(",")),
+                            "t", chef, "la", ((Integer) o[8]).longValue(), "h", 30 - n * 10, "st", status));
+            db.update("""
+                    \sINSERT INTO work_order_line (work_order_id, product_id, quantity) SELECT :w, id, :q FROM product WHERE code = :c""",
+                    Db.p("w", id, "c", o[9], "q", o[10]));
+            db.update("UPDATE work_order SET status = :st WHERE id = :id", Db.p("id", id, "st", "PAYE".equals(status) ? "TERMINE" : status));
+            n++;
+        }
+    }
+
+    /** Le DAF a délégué la validation des recharges jusqu'à 2 000 000 F à une comptable pendant son absence. */
+    private void delegation() {
+        Long daf = db.value("SELECT id FROM employee WHERE role_code = 'DAF' AND active ORDER BY id LIMIT 1", Map.of(), Long.class);
+        Long accountant = db.value("SELECT id FROM employee WHERE email = 'kafui.ekoue@zener.tg'", Map.of(), Long.class);
+        if (daf == null || accountant == null) {
+            return;
+        }
+        db.update("""
+                \sINSERT INTO validation_delegation (from_employee, to_employee, kinds, max_amount, starts_at, ends_at, note, created_by)
+                VALUES (:d, :a, '{RECHARGE,RECHARGE_MASSE}', 2000000, now() - interval '2 days', now() + interval '12 days',
+                        'Congés du DAF : recharges jusqu''à 2 000 000 F', :d)""", Db.p("d", daf, "a", accountant));
     }
 
     private void step(String name, String marker, Runnable r) {
