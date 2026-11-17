@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Plus, Store, CreditCard, HandCoins, Clock, CalendarDays, Users, CloudOff, Banknote, Smartphone, Printer, CircleCheck,
-  PackagePlus, BadgePlus, Megaphone, RotateCcw, ShoppingBag, Truck, Trash2,
+  PackagePlus, BadgePlus, Megaphone, RotateCcw, ShoppingBag, Truck, Trash2, Pencil,
 } from 'lucide-react';
-import { PageHeader, Card, Kpi, Trend, Badge, StatusBadge, Button, Avatar, IcoBox, Async, Empty } from '../components/ui.jsx';
+import { PageHeader, Card, Kpi, Trend, Badge, StatusBadge, Button, Avatar, IcoBox, Async, Empty, Checkbox } from '../components/ui.jsx';
 import { FormModal, Field, TextInput, SelectInput, useToast } from '../components/feedback.jsx';
 import { useApi, useInterval, useLiveReload } from '../api/hooks.js';
 import { fileUrl, post, put } from '../api/client.js';
@@ -14,6 +14,68 @@ import { ago, avatarColor, dayMonth, fcfa, isoDay, money, num, pct } from '../li
 
 const KIND_TONE = { PERMANENT: 'blue', TEMPORAIRE: 'purple', PROMOTIONNEL: 'orange' };
 const KIND_ICON = { PERMANENT: Store, TEMPORAIRE: CalendarDays, PROMOTIONNEL: Megaphone };
+
+/** Gammes Zener qu'un point de vente peut proposer ; « Autre » ouvre un champ texte. */
+const SELLS = [
+  { value: 'CARTES', label: 'Cartes Zener', hint: 'classique, Club' },
+  { value: 'LUBRIFIANTS', label: 'Lubrifiants', hint: 'huiles moteur, boîte, hydrauliques…' },
+  { value: 'GAZ', label: 'Gaz butane', hint: 'bouteilles 6 et 12,5 kg, échanges' },
+  { value: 'ACCESSOIRES', label: 'Accessoires', hint: 'brûleurs, détendeurs…' },
+  { value: 'ZEN_MOBILITY', label: 'Commandes Zen Mobility', hint: 'carburant livré, 1 000 L minimum' },
+  { value: 'AUTRE', label: 'Autre', hint: 'à préciser' },
+];
+const SELL_LABEL = Object.fromEntries(SELLS.map((x) => [x.value, x.label]));
+/** Catégories de produits correspondant à chaque gamme (« Autre » : tout sauf carburant, services et cartes). */
+const SELL_CATEGORIES = { CARTES: ['CARTE'], LUBRIFIANTS: ['LUBRIFIANT'], GAZ: ['GAZ'], ACCESSOIRES: ['ACCESSOIRE'] };
+const sellsText = (p) => (p.sells || ['CARTES']).map((x) => (x === 'AUTRE' && p.sellsOther ? p.sellsOther : SELL_LABEL[x] || x)).join(' · ');
+const allowedCategory = (p, category) => (p.sells || ['CARTES']).some((x) => (x === 'AUTRE' ? !['CARBURANT', 'SERVICE', 'CARTE'].includes(category)
+  : (SELL_CATEGORIES[x] || []).includes(category)));
+
+/** Choix de ce que vend le point de vente (plusieurs gammes possibles). */
+function SellsPicker({ value, other, onChange, onOther }) {
+  const toggle = (v, on) => onChange(on ? [...value, v] : value.filter((x) => x !== v));
+  return (
+    <div>
+      <div className="grid g2" style={{ gap: 6 }}>
+        {SELLS.map((o) => (
+          <label key={o.value} className="row" style={{ gap: 8, alignItems: 'flex-start', cursor: 'pointer', border: '1px solid var(--border)', borderRadius: 8, padding: '7px 10px',
+            background: value.includes(o.value) ? 'var(--primary-50)' : undefined, borderColor: value.includes(o.value) ? '#bcd3ee' : undefined }}>
+            <Checkbox checked={value.includes(o.value)} onChange={(v) => toggle(o.value, v)} />
+            <span style={{ lineHeight: 1.25 }}>
+              <span className="strong" style={{ fontSize: 13.5 }}>{o.label}</span>
+              <span className="muted" style={{ display: 'block', fontSize: 12 }}>{o.hint}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+      {value.includes('AUTRE') && (
+        <label className="input" style={{ marginTop: 8 }}>
+          <input value={other} onChange={(e) => onOther(e.target.value)} required autoFocus
+            placeholder="Précisez : produits d'une autre entreprise, goodies, kits d'entretien…" />
+        </label>
+      )}
+      {value.length === 0 && <div style={{ color: 'var(--red)', fontSize: 12.5, marginTop: 6 }}>Choisissez au moins une gamme</div>}
+    </div>
+  );
+}
+
+/** Modification de ce que vend un point de vente existant. */
+function SellsModal({ pdv, onClose, onSaved }) {
+  const notify = useToast();
+  const [sells, setSells] = useState(pdv.sells || ['CARTES']);
+  const [other, setOther] = useState(pdv.sellsOther || '');
+  return (
+    <FormModal title={`Ce que vend · ${pdv.name}`} submitLabel="Enregistrer" onClose={onClose} onSubmit={async () => {
+      if (!sells.length) throw new Error('Choisissez au moins une gamme');
+      await put(`/pdv/${pdv.id}/sells`, { sells, sellsOther: other });
+      notify('Offre du point de vente enregistrée');
+      onSaved();
+    }}>
+      <SellsPicker value={sells} other={other} onChange={setSells} onOther={setOther} />
+      <div className="muted" style={{ fontSize: 13, marginTop: 10 }}>Sans « Cartes Zener », le point de vente ne reçoit ni ne vend de cartes ; les produits hors des gammes choisies sont retirés de sa liste.</div>
+    </FormModal>
+  );
+}
 
 function subtitle(p) {
   if (p.kind === 'PERMANENT') return `Permanent · ${p.address || ''}`;
@@ -71,7 +133,7 @@ function ProductsCard({ pdv, canManage, canSell, onChanged }) {
       notify(e.message, 'error');
     }
   };
-  const choices = (all.data || []).filter((p) => p.active && !['CARBURANT', 'SERVICE'].includes(p.category));
+  const choices = (all.data || []).filter((p) => p.active && !['CARBURANT', 'SERVICE'].includes(p.category) && allowedCategory(pdv, p.category));
   return (
     <Card className="card-pad">
       <div className="row between">
@@ -100,7 +162,7 @@ function ProductsCard({ pdv, canManage, canSell, onChanged }) {
             <Button size="sm" variant="primary" onClick={save}>Enregistrer</Button>
           </div>
         </div>
-      ) : list.length === 0 ? <div className="muted" style={{ marginTop: 10 }}>Cartes neuves uniquement.</div> : (
+      ) : list.length === 0 ? <div className="muted" style={{ marginTop: 10 }}>{pdv.sellsCards && (pdv.sells || []).length === 1 ? 'Cartes neuves uniquement.' : 'Aucun produit dans la liste : « Modifier la liste » pour ajouter ceux des gammes vendues.'}</div> : (
         <div className="table-wrap" style={{ marginTop: 8 }}><table className="table">
           <thead><tr><th>Produit</th><th className="r">Prix</th><th className="r">Stock</th>{canManage && <th />}</tr></thead>
           <tbody>{list.map((p) => (
@@ -179,7 +241,8 @@ function ProductSaleModal({ pdv, products, onClose, onSaved }) {
 function PdvModal({ temporary, onClose, onSaved }) {
   const notify = useToast();
   const [f, setF] = useState({ name: '', address: '', startDate: isoDay(), endDate: isoDay(new Date(Date.now() + 5 * 86400000)), cardsPlanned: 200, reason: '',
-    kind: 'TEMPORAIRE', campaign: '', offer: '' });
+    kind: 'TEMPORAIRE', campaign: '', offer: '', sells: ['CARTES'], sellsOther: '' });
+  const cards = f.sells.includes('CARTES');
   const set = (k) => (v) => setF((x) => ({ ...x, [k]: v }));
   return (
     <FormModal
@@ -187,12 +250,13 @@ function PdvModal({ temporary, onClose, onSaved }) {
       submitLabel={temporary ? 'Envoyer la demande' : 'Créer'}
       onClose={onClose}
       onSubmit={async () => {
-        const body = { ...f, cardsPlanned: Number(f.cardsPlanned) || null };
+        if (!f.sells.length) throw new Error('Choisissez ce que vend le point de vente');
+        const body = { ...f, cardsPlanned: cards ? Number(f.cardsPlanned) || null : null };
         if (temporary) {
           await post('/pdv/requests', body);
           notify('Demande envoyée · à valider par l’Admin ou le DAF', 'info');
         } else {
-          await post('/pdv', { name: f.name, address: f.address, cardsPlanned: body.cardsPlanned });
+          await post('/pdv', { name: f.name, address: f.address, cardsPlanned: body.cardsPlanned, sells: f.sells, sellsOther: f.sellsOther });
           notify('Point de vente créé');
         }
         onSaved();
@@ -208,12 +272,15 @@ function PdvModal({ temporary, onClose, onSaved }) {
                 { value: 'PROMOTIONNEL', label: 'Promotionnel (campagne, partenaire)' }]} />
             </Field>
             {f.kind === 'PROMOTIONNEL' && <Field label="Campagne"><TextInput value={f.campaign} onChange={set('campaign')} required placeholder="Campagne partenaire…" /></Field>}
-            {f.kind === 'PROMOTIONNEL' && <Field label="Offre" full><TextInput value={f.offer} onChange={set('offer')} placeholder="Carte classique à 500 F…" /></Field>}
+            {f.kind === 'PROMOTIONNEL' && <Field label="Offre" full><TextInput value={f.offer} onChange={set('offer')} placeholder={cards ? 'Carte classique à 500 F…' : 'Huile 5 L à prix promo…'} /></Field>}
             <Field label="Début"><TextInput type="date" value={f.startDate} onChange={set('startDate')} required /></Field>
             <Field label="Fin"><TextInput type="date" value={f.endDate} onChange={set('endDate')} required /></Field>
           </>
         )}
-        <Field label="Cartes prévues"><TextInput type="number" min="0" value={f.cardsPlanned} onChange={set('cardsPlanned')} /></Field>
+        <Field label="Ce que vend le point de vente" full>
+          <SellsPicker value={f.sells} other={f.sellsOther} onChange={set('sells')} onOther={set('sellsOther')} />
+        </Field>
+        {cards && <Field label="Cartes prévues"><TextInput type="number" min="0" value={f.cardsPlanned} onChange={set('cardsPlanned')} /></Field>}
         {temporary && <Field label="Motif" full><TextInput value={f.reason} onChange={set('reason')} placeholder="Événement, campagne…" /></Field>}
       </div>
     </FormModal>
@@ -402,7 +469,7 @@ export default function PointsDeVente() {
     <>
       <PageHeader
         title="Points de vente"
-        subtitle="Point de vente permanent au siège et points de vente temporaires · fonctionne hors connexion"
+        subtitle="Point de vente permanent au siège, temporaires et promotionnels · cartes Zener et autres produits · fonctionne hors connexion"
         actions={
           <>
             {can('PDV_GERER') && <Button icon={Store} onClick={() => setModal({ type: 'pdv' })}>Point permanent</Button>}
@@ -449,7 +516,9 @@ export default function PointsDeVente() {
                   </div>
                   <div className="row" style={{ marginTop: 12, gap: 18, color: 'var(--muted)', fontSize: 13 }}>
                     <span className="row" style={{ gap: 6 }}><Users size={15} /> {p.agents} agents</span>
-                    <span className="row num" style={{ gap: 6 }}><CreditCard size={15} /> {num(p.cardsSold)} / {num(p.cardsPlanned || p.cardsAllocated)} cartes</span>
+                    {p.sellsCards
+                      ? <span className="row num" style={{ gap: 6 }}><CreditCard size={15} /> {num(p.cardsSold)} / {num(p.cardsPlanned || p.cardsAllocated)} cartes</span>
+                      : <span className="row" style={{ gap: 6, minWidth: 0 }}><ShoppingBag size={15} /> <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sellsText(p)}</span></span>}
                     <span className="strong num" style={{ marginLeft: 'auto', color: 'var(--text)' }}>{p.amountTotal ? money(p.amountTotal) : '— F'}</span>
                   </div>
                   {p.statusLabel === 'Hors ligne' && (
@@ -472,8 +541,8 @@ export default function PointsDeVente() {
                     <div className="row between">
                       <div className="card-title">{p.name}{['OUVERT', 'A_CLOTURER', 'CLOS'].includes(p.status) ? ' · clôture' : ''}</div>
                       <span className="row" style={{ gap: 8 }}>
-                        {p.status === 'OUVERT' && can('PDV_VENDRE') && <Button size="sm" icon={BadgePlus} onClick={() => setModal({ type: 'sell', pdv: p })}>Vendre une carte</Button>}
-                        {['OUVERT', 'DEMANDE'].includes(p.status) && can('PDV_GERER') && <Button size="sm" icon={PackagePlus} onClick={() => setModal({ type: 'allocate', pdv: p })}>Attribuer des cartes</Button>}
+                        {p.sellsCards && p.status === 'OUVERT' && can('PDV_VENDRE') && <Button size="sm" icon={BadgePlus} onClick={() => setModal({ type: 'sell', pdv: p })}>Vendre une carte</Button>}
+                        {p.sellsCards && ['OUVERT', 'DEMANDE'].includes(p.status) && can('PDV_GERER') && <Button size="sm" icon={PackagePlus} onClick={() => setModal({ type: 'allocate', pdv: p })}>Attribuer des cartes</Button>}
                         {p.kind !== 'PERMANENT' && ['CLOS', 'REFUSE'].includes(p.status) && can('PDV_GERER') && <Button size="sm" icon={RotateCcw} onClick={() => setModal({ type: 'reopen', pdv: p })}>Rouvrir</Button>}
                       </span>
                     </div>
@@ -486,6 +555,13 @@ export default function PointsDeVente() {
                       {p.status === 'OUVERT' && (p.statusLabel === 'Hors ligne'
                         ? <Badge tone="orange" dot>Hors ligne · {ago(p.lastSyncAt)}</Badge>
                         : <Badge tone="green" dot>Synchronisé · {ago(p.lastSyncAt)}</Badge>)}
+                    </div>
+                    <div className="row" style={{ gap: 6, marginTop: 10, flexWrap: 'wrap', fontSize: 13 }}>
+                      <span className="muted">Vend :</span>
+                      {(p.sells || ['CARTES']).map((x) => <Badge key={x} tone={x === 'CARTES' ? 'blue' : x === 'AUTRE' ? 'gray' : 'green'}>{x === 'AUTRE' ? `Autre : ${p.sellsOther}` : SELL_LABEL[x] || x}</Badge>)}
+                      {can('PDV_GERER') && !['CLOS', 'REFUSE'].includes(p.status) && (
+                        <button type="button" className="link-more" title="Modifier ce que vend le point de vente" onClick={() => setModal({ type: 'sells', pdv: p })}><Pencil size={14} /></button>
+                      )}
                     </div>
                     {p.reason && <div className="muted" style={{ fontSize: 13, marginTop: 10 }}>{p.reason}</div>}
                     {p.status === 'DEMANDE' ? (
@@ -543,6 +619,7 @@ export default function PointsDeVente() {
       {modal?.type === 'allocate' && <AllocateModal pdv={modal.pdv} onClose={() => setModal(null)} onSaved={reload} />}
       {modal?.type === 'sell' && <SellModal pdv={modal.pdv} onClose={() => setModal(null)} onSaved={reload} />}
       {modal?.type === 'reopen' && <ReopenModal pdv={modal.pdv} onClose={() => setModal(null)} onSaved={reload} />}
+      {modal?.type === 'sells' && <SellsModal pdv={modal.pdv} onClose={() => setModal(null)} onSaved={reload} />}
     </>
   );
 }

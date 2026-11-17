@@ -134,6 +134,9 @@ public class DemoExtras {
         if (hq != null && admin > 0) {
             db.update("UPDATE pdv SET session_started_at = COALESCE(session_started_at, created_at)", Map.of());
         }
+        // ce que vend chaque point de vente : le siège a toute la gamme, le stand Agro-Plus des cartes et des lubrifiants
+        db.update("UPDATE pdv SET sells = '{CARTES,LUBRIFIANTS,GAZ,ACCESSOIRES,ZEN_MOBILITY}' WHERE kind = 'PERMANENT'", Map.of());
+        db.update("UPDATE pdv SET sells = '{CARTES,LUBRIFIANTS}' WHERE name = 'Stand Agro-Plus'", Map.of());
     }
 
     /** Quelques ordres de travail à l'atelier d'Agoè : un payé, un en cours, un terminé à encaisser. */

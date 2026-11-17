@@ -73,6 +73,7 @@ public class PdvController {
         return """
                 \sSELECT p.id, p.code, p.name, p.kind, p.address, p.latitude, p.longitude, p.start_date, p.end_date, p.status,
                        p.cards_planned, p.reason, p.last_sync_at, p.created_at, p.campaign, p.offer, p.session_no, p.session_started_at,
+                       p.sells, p.sells_other, 'CARTES' = ANY (p.sells) AS sells_cards,
                        CASE p.kind WHEN 'PERMANENT' THEN 'Permanent' WHEN 'PROMOTIONNEL' THEN 'Promotionnel' ELSE 'Temporaire' END AS kind_label,
                        (SELECT count(*) FROM pdv_product pp WHERE pp.pdv_id = p.id) AS products,
                        CASE WHEN p.status = 'OUVERT' AND p.kind <> 'PERMANENT'
@@ -175,7 +176,30 @@ public class PdvController {
 
     public record PdvForm(@NotBlank String name, String address, BigDecimal latitude, BigDecimal longitude,
                           LocalDate startDate, LocalDate endDate, @Min(0) Integer cardsPlanned, String reason,
-                          List<Long> agentIds, @Pattern(regexp = "TEMPORAIRE|PROMOTIONNEL") String kind, String campaign, String offer) {}
+                          List<Long> agentIds, @Pattern(regexp = "TEMPORAIRE|PROMOTIONNEL") String kind, String campaign, String offer,
+                          List<String> sells, String sellsOther) {}
+
+    /** Gammes Zener qu'un point de vente peut proposer (« AUTRE » : précisé en texte). */
+    static final List<String> SELLS = List.of("CARTES", "LUBRIFIANTS", "GAZ", "ACCESSOIRES", "ZEN_MOBILITY", "AUTRE");
+
+    /** Ce que vend le point de vente : au moins une gamme ; « Autre » doit être précisé. Par défaut : cartes. */
+    private static String[] sells(List<String> values, String other) {
+        List<String> v = values == null || values.isEmpty() ? List.of("CARTES")
+                : values.stream().map(String::trim).map(String::toUpperCase).distinct().toList();
+        for (String s : v) {
+            if (!SELLS.contains(s)) {
+                throw new ApiException("Gamme inconnue : " + s);
+            }
+        }
+        if (v.contains("AUTRE") && (other == null || other.isBlank())) {
+            throw new ApiException("Précisez ce que vend le point de vente (« Autre »)");
+        }
+        return v.toArray(String[]::new);
+    }
+
+    private static String sellsOther(List<String> values, String other) {
+        return values != null && values.contains("AUTRE") && other != null && !other.isBlank() ? other.trim() : null;
+    }
 
     /** Point de vente permanent (siège) : ouvert immédiatement. */
     @PostMapping
@@ -183,10 +207,12 @@ public class PdvController {
     @Transactional
     public Map<String, Object> createPermanent(@Valid @RequestBody PdvForm f) {
         long id = db.insert("""
-                \sINSERT INTO pdv (code, name, kind, address, latitude, longitude, status, cards_planned, requested_by, last_sync_at)
-                VALUES (:c, :n, 'PERMANENT', :a, :lat, :lon, 'OUVERT', :cp, :u, now())""",
+                \sINSERT INTO pdv (code, name, kind, address, latitude, longitude, status, cards_planned, requested_by, last_sync_at,
+                                 sells, sells_other)
+                VALUES (:c, :n, 'PERMANENT', :a, :lat, :lon, 'OUVERT', :cp, :u, now(), :se, :so)""",
                 Db.p("c", refs.pdv(), "n", f.name().trim(), "a", f.address(), "lat", f.latitude(), "lon", f.longitude(),
-                        "cp", f.cardsPlanned(), "u", Auth.user().id()));
+                        "cp", f.cardsPlanned(), "u", Auth.user().id(), "se", db.array("text", sells(f.sells(), f.sellsOther())),
+                        "so", sellsOther(f.sells(), f.sellsOther())));
         addAgents(id, f.agentIds());
         journal.log("PDV_CREE", Journal.MODIFICATIONS, "Point de vente permanent créé", f.name(), null, null, id);
         return get(id);
@@ -210,11 +236,12 @@ public class PdvController {
         }
         long id = db.insert("""
                 \sINSERT INTO pdv (code, name, kind, address, latitude, longitude, start_date, end_date, status, cards_planned, reason,
-                                 requested_by, campaign, offer)
-                VALUES (:c, :n, :k, :a, :lat, :lon, :sd, :ed, 'DEMANDE', :cp, :r, :u, :cmp, :off)""",
+                                 requested_by, campaign, offer, sells, sells_other)
+                VALUES (:c, :n, :k, :a, :lat, :lon, :sd, :ed, 'DEMANDE', :cp, :r, :u, :cmp, :off, :se, :so)""",
                 Db.p("c", refs.pdv(), "n", f.name().trim(), "k", kind, "a", f.address(), "lat", f.latitude(), "lon", f.longitude(),
                         "sd", f.startDate(), "ed", f.endDate(), "cp", f.cardsPlanned(), "r", f.reason(), "u", u.id(),
-                        "cmp", blankText(f.campaign()), "off", blankText(f.offer())));
+                        "cmp", blankText(f.campaign()), "off", blankText(f.offer()),
+                        "se", db.array("text", sells(f.sells(), f.sellsOther())), "so", sellsOther(f.sells(), f.sellsOther())));
         addAgents(id, f.agentIds());
         long v = validations.create(new ValidationService.NewRequest(ValidationService.OUVERTURE_PDV, f.name().trim(),
                 "Ouverture d'un point de vente " + ("PROMOTIONNEL".equals(kind) ? "promotionnel (" + f.campaign().trim() + ")" : "temporaire")
@@ -295,12 +322,17 @@ public class PdvController {
     @PreAuthorize("hasAuthority('PDV_GERER')")
     @Transactional
     public List<Map<String, Object>> setProducts(@PathVariable long id, @Valid @RequestBody ProductsForm f) {
-        Map<String, Object> p = db.require("SELECT name FROM pdv WHERE id = :id", Db.p("id", id), "Point de vente introuvable");
+        Map<String, Object> p = db.require("SELECT name, sells FROM pdv WHERE id = :id", Db.p("id", id), "Point de vente introuvable");
         db.update("DELETE FROM pdv_product WHERE pdv_id = :id", Db.p("id", id));
         for (ProductItem i : f.items()) {
-            db.update("""
-                    \sINSERT INTO pdv_product (pdv_id, product_id, promo_price)
-                    SELECT :id, pr.id, :pp FROM product pr WHERE pr.id = :p AND pr.active AND pr.category NOT IN ('CARBURANT', 'SERVICE')""",
+            Map<String, Object> pr = db.one("SELECT name, category FROM product WHERE id = :p AND active", Db.p("p", i.productId()));
+            if (pr == null) {
+                continue;
+            }
+            if (!productAllowed(id, (String) pr.get("category"))) {
+                throw new ApiException(pr.get("name") + " ne fait pas partie de ce que vend ce point de vente");
+            }
+            db.update("INSERT INTO pdv_product (pdv_id, product_id, promo_price) VALUES (:id, :p, :pp)",
                     Db.p("id", id, "p", i.productId(), "pp", i.promoPrice()));
         }
         journal.log("PDV_PRODUITS", Journal.MODIFICATIONS, "Produits du point de vente", p.get("name") + " · " + f.items().size() + " produit(s)",
@@ -399,6 +431,51 @@ public class PdvController {
         return get(id);
     }
 
+    /** Une catégorie de produit est-elle dans ce que vend le point de vente ? */
+    private boolean productAllowed(long pdvId, String category) {
+        return db.count("""
+                \sSELECT count(*) FROM pdv WHERE id = :id AND (
+                    ('AUTRE' = ANY (sells) AND :c NOT IN ('CARBURANT', 'SERVICE', 'CARTE'))
+                    OR (:c = 'CARTE' AND 'CARTES' = ANY (sells)) OR (:c = 'LUBRIFIANT' AND 'LUBRIFIANTS' = ANY (sells))
+                    OR (:c = 'GAZ' AND 'GAZ' = ANY (sells)) OR (:c = 'ACCESSOIRE' AND 'ACCESSOIRES' = ANY (sells)))""",
+                Db.p("id", pdvId, "c", category)) > 0;
+    }
+
+    public record SellsForm(@NotEmpty List<String> sells, String sellsOther) {}
+
+    /**
+     * Ce que vend le point de vente. Retirer les cartes suppose qu'aucune carte n'y est encore attribuée ;
+     * les produits hors des gammes choisies sont retirés de sa liste.
+     */
+    @PutMapping("/{id}/sells")
+    @PreAuthorize("hasAuthority('PDV_GERER')")
+    @Transactional
+    public Map<String, Object> setSells(@PathVariable long id, @Valid @RequestBody SellsForm f) {
+        Map<String, Object> p = db.require("SELECT name, status, sells, sells_other FROM pdv WHERE id = :id FOR UPDATE", Db.p("id", id),
+                "Point de vente introuvable");
+        if ("CLOS".equals(p.get("status")) || "REFUSE".equals(p.get("status"))) {
+            throw ApiException.conflict("Ce point de vente est clos");
+        }
+        String[] values = sells(f.sells(), f.sellsOther());
+        if (!List.of(values).contains("CARTES") && db.count("""
+                \sSELECT count(*) FROM pdv_card WHERE pdv_id = :id AND returned_at IS NULL AND sold_at IS NULL""", Db.p("id", id)) > 0) {
+            throw ApiException.conflict("Des cartes sont encore attribuées à ce point de vente : retournez-les avant de retirer les cartes");
+        }
+        db.update("UPDATE pdv SET sells = :se, sells_other = :so WHERE id = :id",
+                Db.p("id", id, "se", db.array("text", values), "so", sellsOther(List.of(values), f.sellsOther())));
+        for (Map<String, Object> pr : db.list("""
+                \sSELECT pp.product_id, pr.category FROM pdv_product pp JOIN product pr ON pr.id = pp.product_id WHERE pp.pdv_id = :id""",
+                Db.p("id", id))) {
+            if (!productAllowed(id, (String) pr.get("category"))) {
+                db.update("DELETE FROM pdv_product WHERE pdv_id = :id AND product_id = :p", Db.p("id", id, "p", pr.get("productId")));
+            }
+        }
+        journal.audit("PDV_MODIFIE", Journal.MODIFICATIONS, "Offre du point de vente modifiée", p.get("name") + " · " + String.join(", ", values),
+                Map.of("sells", p.get("sells") == null ? "" : p.get("sells").toString(), "autre", String.valueOf(p.get("sellsOther"))),
+                Map.of("sells", String.join(",", values), "autre", String.valueOf(sellsOther(List.of(values), f.sellsOther()))), null, null);
+        return get(id);
+    }
+
     public record AgentForm(@NotNull Long employeeId, @Pattern(regexp = "AGENT|SUPERVISEUR") String role) {}
 
     @PostMapping("/{id}/agents")
@@ -437,7 +514,11 @@ public class PdvController {
     @PreAuthorize("hasAuthority('PDV_GERER')")
     @Transactional
     public Map<String, Object> allocate(@PathVariable long id, @Valid @RequestBody Allocation f) {
-        Map<String, Object> p = db.require("SELECT name, status FROM pdv WHERE id = :id", Db.p("id", id), "Point de vente introuvable");
+        Map<String, Object> p = db.require("SELECT name, status, 'CARTES' = ANY (sells) AS sells_cards FROM pdv WHERE id = :id",
+                Db.p("id", id), "Point de vente introuvable");
+        if (!Boolean.TRUE.equals(p.get("sellsCards"))) {
+            throw ApiException.conflict("Ce point de vente ne vend pas de cartes (voir « Ce qu'il vend »)");
+        }
         if (!List.of("OUVERT", "DEMANDE").contains(p.get("status"))) {
             throw ApiException.conflict("Ce point de vente n'accepte plus de cartes");
         }
