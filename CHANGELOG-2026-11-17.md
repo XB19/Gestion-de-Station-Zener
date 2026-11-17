@@ -1,15 +1,13 @@
-# Nouveautés — réunion du 17 novembre 2026
+# Nouveautés — 17 novembre 2026
 
-1. **Validation par le DAF** : les recharges au-dessus du palier sont validées par le DAF seul, qui peut **déléguer** à un utilisateur ou à un rôle (avec plafond et dates). → *Validations*
-2. **Admin encadré et traçabilité** : les actions sensibles de l'Admin (droits des rôles, paramètres financiers, ajustement de solde, création d'un Admin ou d'un DAF) doivent être approuvées par une **seconde personne**. Chaque opération enregistre **qui, quand, depuis quel appareil et quelle IP, avant / après, et le motif**. Le journal ne peut être ni modifié ni effacé, et les sessions ouvertes peuvent être fermées à distance. → *Journal*
-3. **Onboarding** : mot de passe provisoire à la création d'un employé, changement obligatoire à la première connexion, **visite guidée** selon le rôle, **check-list** de chaque station et écran **Mise en route** du réseau. → *Mise en route*
-4. **Notifications et alertes** : une **cloche** en haut de l'écran et des emails, avec des règles par type d'alerte et des rappels automatiques (licences, Club, contrats). Les **cuves de carburant** déclenchent des alertes à **50 / 40 / 30 / 5 %**, de plus en plus urgentes, avec un lien vers une commande préremplie.
-5. **Carte Club** (remplace VIP) : carte noire à **10 000 F + dépôt de 200 000 F**, valable 12 mois. Elle est renouvelée d'office si le client a assez consommé, sinon contre des frais, avec une période de grâce. Avantages par défaut : prix Club et plafonds plus élevés. → *Cartes*
-6. **Cycle des cartes** : une carte est **activée physiquement** (par une autre personne), puis **attribuée**. À la création d'un lot, on indique si les cartes sont déjà actives. Une carte non activée ne peut pas être attribuée.
-7. **Recharge en masse** : **montant par carte**, modifiable pour toutes d'un coup, dans le fichier comme dans l'export. Sélection directement dans l'application par flotte, titulaire, numéros, dépenses récentes, solde ou inactivité. → *Rechargements › En masse*
-8. **Contrôles des soldes suspects** : recharges fractionnées sous le palier, recharges atypiques ou de nuit, soldes qui dorment ou qui s'accumulent… Le système **alerte** sans bloquer la carte ; on examine puis on clôture avec un motif. → *Contrôles*
-9. **Stations en gérance libre** : exploitant, contrat, redevance et rappels de fin de contrat, recettes « Zener » et « gérance » séparées, nombre de pistolets, de cuves et d'employés. → *Stations*
-10. **Points de vente** : PDV **promotionnels**, **réouverture** possible (après validation), vente d'**autres produits** (lubrifiants par type, marque et conditionnement) à prix promo, et **paiement par carte**. Chaque PDV indique **ce qu'il vend** : cartes Zener, lubrifiants, gaz, accessoires, commandes Zen Mobility, ou **Autre** (précisé en texte). Un PDV sans cartes ne reçoit ni ne vend de cartes. → *Points de vente*
-11. **Atelier** : **ordres de travail** sur les véhicules des clients (vidange, graissage, filtres, lavage…), des produits et de la main-d'œuvre jusqu'à l'encaissement. → *Atelier*
-
-Comptes de démonstration : mot de passe `zener-station` — Admin `ama.kpodar@zener.tg`, DAF `mawuli.kpodar@zener.tg`, gérant `kossi.amegah@zener.tg`.
+- **Validation** : par le DAF seul, délégable.
+- **Admin encadré** : actions sensibles validées par une 2ᵉ personne ; tout est tracé (qui, appareil, IP, avant / après).
+- **Onboarding** : mot de passe provisoire, visite guidée, check-list station, mise en route.
+- **Alertes** : notifications et emails ; cuves à 50 / 40 / 30 / 5 %.
+- **Carte Club** : 10 000 F + 200 000 F de dépôt, 12 mois renouvelables.
+- **Cartes** : activées puis attribuées.
+- **Recharges** : à distance avec référence obligatoire ; en masse en choisissant les cartes, montant par carte.
+- **Contrôles** : soldes et recharges suspects signalés, sans blocage.
+- **Stations en gérance** : exploitant, contrat, recettes séparées.
+- **Points de vente** : promotionnels, réouvrables ; vendent cartes, lubrifiants, gaz, accessoires ou autre.
+- **Atelier** : ordres de travail sur les véhicules.
