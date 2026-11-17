@@ -47,6 +47,10 @@ public class RechargeService {
         if (r.amount() <= 0) {
             throw new ApiException("Montant invalide");
         }
+        if ("DISTANCE".equals(r.channel()) && (r.paymentRef() == null || r.paymentRef().trim().length() < 4)) {
+            // sans client au guichet, la référence du paiement (mobile money, virement) est la seule preuve de l'encaissement
+            throw new ApiException("La référence du paiement est obligatoire pour une recharge à distance (4 caractères minimum)");
+        }
         Map<String, Object> card = db.require("""
                 \sSELECT c.id, c.number, c.status, h.kind AS holder_kind, h.name AS holder_name
                 FROM card c LEFT JOIN holder h ON h.id = c.holder_id WHERE c.number = :n""",

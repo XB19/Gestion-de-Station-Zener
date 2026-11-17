@@ -101,7 +101,7 @@ public class RechargeController {
 
     public record RemoteForm(@NotBlank String cardNumber, @NotBlank String holderName, @Positive long amount,
                              @Pattern(regexp = "MOBILE_MONEY|VIREMENT|CARTE_BANCAIRE") String paymentMethod,
-                             String paymentRef) {}
+                             @NotBlank(message = "La référence du paiement est obligatoire") String paymentRef) {}
 
     /** Recharge à distance : le nom de l'utilisateur et le numéro de carte suffisent, s'ils concordent. */
     @PostMapping("/remote")
@@ -111,7 +111,7 @@ public class RechargeController {
         }
         CurrentUser u = Auth.user();
         return recharges.recharge(new RechargeService.Request(f.cardNumber(), f.amount(), "DISTANCE",
-                f.paymentMethod() == null ? "MOBILE_MONEY" : f.paymentMethod(), f.paymentRef(), u.stationId(), null), u);
+                f.paymentMethod() == null ? "MOBILE_MONEY" : f.paymentMethod(), f.paymentRef().trim(), u.stationId(), null), u);
     }
 
     // ------------------------------------------------------------------ recharge en masse

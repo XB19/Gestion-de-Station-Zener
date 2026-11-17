@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   History, Wallet, Send, FileSpreadsheet, Download, Upload, Check, CircleCheck, CircleX, Smartphone, Search,
+  Plus, X, Users, SlidersHorizontal, ListPlus,
 } from 'lucide-react';
 import { PageHeader, Card, Badge, StatusBadge, Button, Segmented, Checkbox, KV, Async, Empty, Pager } from '../components/ui.jsx';
 import CardPicker from '../components/CardPicker.jsx';
@@ -152,8 +153,8 @@ function UnitRecharge({ initialCard, threshold, onDone }) {
 /** Recharge à distance : nom + numéro suffisent s'ils concordent. */
 function RemoteRecharge({ onDone }) {
   const notify = useToast();
-  const [number, setNumber] = useState('6011 3302 1209');
-  const [name, setName] = useState('Akossiwa Lawson');
+  const [number, setNumber] = useState('');
+  const [name, setName] = useState('');
   const [match, setMatch] = useState(null);
   const [amount, setAmount] = useState(25000);
   const [ref, setRef] = useState('');
@@ -172,7 +173,7 @@ function RemoteRecharge({ onDone }) {
     e.preventDefault();
     setBusy(true);
     try {
-      const r = await post('/recharges/remote', { cardNumber: number, holderName: name, amount, paymentMethod: 'MOBILE_MONEY', paymentRef: ref || null });
+      const r = await post('/recharges/remote', { cardNumber: number, holderName: name, amount, paymentMethod: 'MOBILE_MONEY', paymentRef: ref.trim() });
       notify(r.status === 'CREDITEE' ? `Recharge à distance de ${money(amount)} créditée` : 'Recharge à distance en attente de validation',
         r.status === 'CREDITEE' ? 'success' : 'info');
       onDone();
@@ -201,9 +202,12 @@ function RemoteRecharge({ onDone }) {
         </div>
         <label className="field-label" style={{ marginTop: 14 }}>Montant</label>
         <AmountPicker value={amount} onChange={setAmount} />
-        <label className="field-label" style={{ marginTop: 14 }}>Référence mobile money</label>
-        <label className="input" style={{ height: 42 }}><input value={ref} onChange={(e) => setRef(e.target.value)} placeholder="TMoney / Flooz" /></label>
-        <Button icon={Smartphone} variant="primary" block style={{ height: 42, marginTop: 14 }} type="submit" disabled={busy || !match || !amount}>
+        <label className="field-label" style={{ marginTop: 14 }}>Référence mobile money <span style={{ color: 'var(--red)' }}>*</span></label>
+        <label className="input" style={{ height: 42 }}>
+          <input value={ref} onChange={(e) => setRef(e.target.value)} placeholder="N° de transaction TMoney / Flooz" required minLength={4} />
+        </label>
+        <div className="muted" style={{ fontSize: 13, marginTop: 8 }}>Obligatoire : seule preuve du paiement quand le client n’est pas au guichet</div>
+        <Button icon={Smartphone} variant="primary" block style={{ height: 42, marginTop: 14 }} type="submit" disabled={busy || !match || !amount || ref.trim().length < 4}>
           Envoyer via mobile money
         </Button>
       </form>
@@ -213,40 +217,133 @@ function RemoteRecharge({ onDone }) {
 
 /** Recharge en masse : import d'un fichier, contrôle ligne par ligne, crédit et validation. */
 /**
- * Recharge en masse préparée dans l'application : sélection souple des cartes (flotte, type, nom ou plaque, numéros
- * collés, dépenses récentes, solde, inactivité), montant ligne à ligne ou pour toutes d'un coup, export en fichier
- * (montant compris) ou envoi direct au contrôle du lot.
+ * Recharge en masse préparée dans l'application. On constitue une liste de cartes à recharger en les ajoutant
+ * de plusieurs façons (recherche d'une carte par nom, plaque ou numéro ; une flotte entière ; des critères
+ * facultatifs ; une liste de numéros collée), puis on indique le montant de chacune (ou de toutes d'un coup),
+ * et on envoie la liste au contrôle du lot ou on l'exporte en fichier (montant compris).
  */
+const SPENT_DAYS = 30;
+const ADD_MODES = [
+  { label: 'Rechercher', icon: Search },
+  { label: 'Une flotte', icon: Users },
+  { label: 'Par critères', icon: SlidersHorizontal },
+  { label: 'Liste de numéros', icon: ListPlus },
+];
+const NO_CRITERIA = { type: '', spentDays: '30', minSpent: '', maxSpent: '', balanceBelow: '', inactiveDays: '' };
+
+/** Cartes trouvées, à ajouter une par une ou toutes d'un coup à la liste à recharger. */
+function FoundCards({ items, have, busy, onAdd }) {
+  if (busy) return <div className="muted" style={{ marginTop: 10, fontSize: 13 }}>Recherche…</div>;
+  if (!items) return null;
+  if (!items.length) return <div className="muted" style={{ marginTop: 10, fontSize: 13 }}>Aucune carte active ne correspond.</div>;
+  const fresh = items.filter((c) => !have.has(c.number));
+  return (
+    <div style={{ marginTop: 10, border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
+      <div className="row between" style={{ padding: '8px 12px', background: 'var(--surface-2)', gap: 8, flexWrap: 'wrap' }}>
+        <span className="strong" style={{ fontSize: 13 }}>
+          {items.length} carte(s) trouvée(s){items.length > fresh.length ? ` · ${items.length - fresh.length} déjà dans la liste` : ''}
+        </span>
+        {fresh.length > 1 && <Button size="sm" variant="primary" icon={Plus} onClick={() => onAdd(fresh)}>Ajouter les {fresh.length}</Button>}
+      </div>
+      <div style={{ maxHeight: 240, overflow: 'auto' }}>
+        {items.slice(0, 100).map((c) => (
+          <div key={c.number} className="row" style={{ gap: 10, padding: '7px 12px', borderTop: '1px solid var(--border)', fontSize: 13 }}>
+            <span className="num strong" style={{ width: 128, flexShrink: 0 }}>{c.numberFormatted}</span>
+            <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {c.holderName || 'Sans titulaire'}
+              <span className="muted">{[c.typeLabel, c.groupName, c.vehiclePlate].filter(Boolean).map((x) => ` · ${x}`).join('')}</span>
+            </span>
+            <span className="muted num" style={{ whiteSpace: 'nowrap' }}>solde {fcfa(c.balance)} F</span>
+            {have.has(c.number)
+              ? <Badge tone="green">Dans la liste</Badge>
+              : <Button size="sm" icon={Plus} onClick={() => onAdd([c])}>Ajouter</Button>}
+          </div>
+        ))}
+        {items.length > 100 && (
+          <div className="muted" style={{ padding: '7px 12px', borderTop: '1px solid var(--border)', fontSize: 13 }}>
+            … et {items.length - 100} autre(s), comprises dans « Ajouter les {fresh.length} »
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function PrepareBulk({ onBatch, payment, paymentRef }) {
   const notify = useToast();
   const groups = useApi('/card-groups');
-  const [f, setF] = useState({ groupId: '', type: '', q: '', numbers: '', spentDays: '30', minSpent: '', maxSpent: '', balanceBelow: '', inactiveDays: '' });
-  const [rows, setRows] = useState(null);
+  const [mode, setMode] = useState(ADD_MODES[0].label);
+  const [q, setQ] = useState('');
+  const [groupId, setGroupId] = useState('');
+  const [crit, setCrit] = useState(NO_CRITERIA);
+  const [numbers, setNumbers] = useState('');
+  const [found, setFound] = useState(null);
+  const [finding, setFinding] = useState(false);
+  const [rows, setRows] = useState([]);
   const [amounts, setAmounts] = useState({});
-  const [picked, setPicked] = useState({});
   const [bulk, setBulk] = useState({ mode: 'FIXE', value: '' });
   const [label, setLabel] = useState('');
   const [busy, setBusy] = useState(false);
-  const set = (k) => (v) => setF((x) => ({ ...x, [k]: v }));
-  const search = async () => {
-    setBusy(true);
+  const seq = useRef(0);
+  const have = new Set(rows.map((c) => c.number));
+
+  const find = async (params) => {
+    const n = ++seq.current;
+    setFinding(true);
     try {
-      const r = await api(`/recharges/selection${qs({ ...f, numbers: f.numbers.trim() || undefined, limit: 2000 })}`);
-      setRows(r);
-      setPicked(Object.fromEntries(r.map((c) => [c.number, true])));
-      setAmounts((a) => Object.fromEntries(r.map((c) => [c.number, a[c.number] ?? ''])));
+      const r = await api(`/recharges/selection${qs({ spentDays: SPENT_DAYS, ...params, limit: 2000 })}`);
+      if (n === seq.current) setFound(r.map((c) => ({ ...c, spentDays: Number(params.spentDays) || SPENT_DAYS })));
     } catch (e) {
-      notify(e.message, 'error');
+      if (n === seq.current) { setFound(null); notify(e.message, 'error'); }
     } finally {
-      setBusy(false);
+      if (n === seq.current) setFinding(false);
     }
+  };
+  const switchMode = (m) => {
+    seq.current += 1;
+    setMode(m);
+    setFound(null);
+    setFinding(false);
+  };
+
+  // recherche au fil de la frappe : nom du titulaire, plaque, chauffeur, ou chiffres du numéro
+  useEffect(() => {
+    if (mode !== 'Rechercher') return undefined;
+    const t = q.trim();
+    const digits = t.replace(/[\s.-]/g, '');
+    const numeric = /^\d+$/.test(digits);
+    if (!t || (numeric ? digits.length < 4 : t.length < 2)) {
+      seq.current += 1;
+      setFound(null);
+      setFinding(false);
+      return undefined;
+    }
+    const h = setTimeout(() => find(numeric ? { numbers: digits } : { q: t }), 300);
+    return () => clearTimeout(h);
+  }, [q, mode]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (mode === 'Une flotte' && groupId) find({ groupId });
+  }, [groupId, mode]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const add = (cards) => {
+    setRows((r) => {
+      const known = new Set(r.map((c) => c.number));
+      return [...r, ...cards.filter((c) => !known.has(c.number))];
+    });
+    notify(cards.length > 1 ? `${cards.length} cartes ajoutées à la liste` : `Carte ${cards[0].numberFormatted} ajoutée`);
+  };
+  const remove = (number) => setRows((r) => r.filter((c) => c.number !== number));
+  const clearAll = () => {
+    setRows([]);
+    setAmounts({});
   };
   const apply = () => {
     const v = Number(bulk.value);
-    if (!rows || !(v > 0)) return;
+    if (!rows.length || !(v > 0)) return notify('Indiquez une valeur', 'error');
     setAmounts((a) => {
       const next = { ...a };
-      rows.filter((c) => picked[c.number]).forEach((c) => {
+      rows.forEach((c) => {
         const amount = bulk.mode === 'FIXE' ? v
           : bulk.mode === 'POURCENT' ? Math.round((Number(c.spent) * v) / 100 / 1000) * 1000
             : Math.max(v - Number(c.balance), 0);
@@ -254,16 +351,20 @@ function PrepareBulk({ onBatch, payment, paymentRef }) {
       });
       return next;
     });
+    return undefined;
   };
-  const lines = (rows || []).filter((c) => picked[c.number] && Number(amounts[c.number]) > 0)
+
+  const lines = rows.filter((c) => Number(amounts[c.number]) > 0)
     .map((c) => ({ cardNumber: c.number, amount: Number(amounts[c.number]), label: label || null }));
+  const missing = rows.length - lines.length;
   const total = lines.reduce((t, l) => t + l.amount, 0);
+
   const exportFile = async (format) => {
-    const all = (rows || []).filter((c) => picked[c.number]).map((c) => ({ cardNumber: c.number, amount: Number(amounts[c.number]) || null, label: label || null }));
-    if (!all.length) return notify('Aucune carte sélectionnée', 'error');
+    if (!rows.length) return notify('Ajoutez des cartes à la liste', 'error');
+    const all = rows.map((c) => ({ cardNumber: c.number, amount: Number(amounts[c.number]) || null, label: label || null }));
     const res = await fetch(`${API_URL}/api/recharges/selection/export`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
-      body: JSON.stringify({ lines: all, format, spentDays: Number(f.spentDays) || 30 }),
+      body: JSON.stringify({ lines: all, format, spentDays: SPENT_DAYS }),
     });
     if (!res.ok) return notify('Export impossible', 'error');
     const a = document.createElement('a');
@@ -271,6 +372,7 @@ function PrepareBulk({ onBatch, payment, paymentRef }) {
     a.download = `recharges.${format}`;
     a.click();
     URL.revokeObjectURL(a.href);
+    return undefined;
   };
   const submit = async () => {
     if (!lines.length) return notify('Indiquez un montant pour au moins une carte', 'error');
@@ -284,63 +386,112 @@ function PrepareBulk({ onBatch, payment, paymentRef }) {
     } finally {
       setBusy(false);
     }
+    return undefined;
   };
-  const allPicked = rows && rows.length > 0 && rows.every((c) => picked[c.number]);
+  const setC = (k) => (e) => setCrit((x) => ({ ...x, [k]: e.target.value }));
+  const anyCriteria = Object.entries(crit).some(([k, v]) => v !== NO_CRITERIA[k]);
+
   return (
     <Card className="card-pad">
       <div className="card-title">Préparer dans l'application</div>
-      <div className="card-sub">Choisissez les cartes, indiquez le montant de chacune (ou de toutes d'un coup), puis envoyez au contrôle ou exportez le fichier.</div>
-      <div className="form-grid" style={{ marginTop: 14 }}>
-        <div><label className="field-label">Flotte / groupe</label><label className="input"><select value={f.groupId} onChange={(e) => set('groupId')(e.target.value)}>
-          <option value="">Toutes</option>{(groups.data || []).map((g) => <option key={g.id} value={g.id}>{g.holderName} · {g.name}</option>)}</select></label></div>
-        <div><label className="field-label">Type de carte</label><label className="input"><select value={f.type} onChange={(e) => set('type')(e.target.value)}>
-          <option value="">Tous</option><option value="CLASSIQUE">Classique</option><option value="CLUB">Club</option><option value="FLOTTE">Flotte</option></select></label></div>
-        <div><label className="field-label">Titulaire, plaque ou chauffeur</label><label className="input"><input value={f.q} onChange={(e) => set('q')(e.target.value)} /></label></div>
-        <div><label className="field-label">Dépenses sur (jours)</label><label className="input"><input type="number" min="1" value={f.spentDays} onChange={(e) => set('spentDays')(e.target.value)} /></label></div>
-        <div><label className="field-label">Dépensé au moins (F)</label><label className="input"><input type="number" min="0" value={f.minSpent} onChange={(e) => set('minSpent')(e.target.value)} /></label></div>
-        <div><label className="field-label">Dépensé au plus (F)</label><label className="input"><input type="number" min="0" value={f.maxSpent} onChange={(e) => set('maxSpent')(e.target.value)} /></label></div>
-        <div><label className="field-label">Solde inférieur à (F)</label><label className="input"><input type="number" min="0" value={f.balanceBelow} onChange={(e) => set('balanceBelow')(e.target.value)} /></label></div>
-        <div><label className="field-label">Sans achat depuis (jours)</label><label className="input"><input type="number" min="1" value={f.inactiveDays} onChange={(e) => set('inactiveDays')(e.target.value)} /></label></div>
-        <div className="full"><label className="field-label">Numéros de carte (complets ou 5 derniers chiffres, séparés par des espaces ou des virgules)</label>
-          <textarea className="textarea" rows={2} value={f.numbers} onChange={(e) => set('numbers')(e.target.value)} /></div>
+      <div className="card-sub">1. Ajoutez les cartes à recharger · 2. indiquez le montant de chacune (ou de toutes d'un coup) · 3. envoyez au contrôle ou exportez</div>
+
+      <div style={{ marginTop: 14 }}>
+        <Segmented items={ADD_MODES} value={mode} onChange={switchMode} />
       </div>
-      <div className="row" style={{ justifyContent: 'flex-end', marginTop: 10 }}><Button icon={Search} disabled={busy} onClick={search}>Afficher les cartes</Button></div>
-      {rows && (
+
+      {mode === 'Rechercher' && (
+        <div style={{ marginTop: 12 }}>
+          <label className="input" style={{ height: 42 }}>
+            <Search size={17} strokeWidth={1.8} />
+            <input value={q} onChange={(e) => setQ(e.target.value)} autoFocus
+              placeholder="Nom du titulaire, plaque, chauffeur, ou chiffres du numéro (5 derniers suffisent)" />
+          </label>
+        </div>
+      )}
+      {mode === 'Une flotte' && (
+        <div style={{ marginTop: 12 }}>
+          <label className="input" style={{ height: 42 }}>
+            <select value={groupId} onChange={(e) => setGroupId(e.target.value)}>
+              <option value="">Choisissez une flotte…</option>
+              {(groups.data || []).map((g) => <option key={g.id} value={g.id}>{g.holderName} · {g.name}</option>)}
+            </select>
+          </label>
+        </div>
+      )}
+      {mode === 'Par critères' && (
+        <div style={{ marginTop: 12 }}>
+          <div className="muted" style={{ fontSize: 13 }}>Tous les critères sont facultatifs : sans critère, toutes les cartes actives sont proposées.</div>
+          <div className="form-grid" style={{ marginTop: 8 }}>
+            <div><label className="field-label">Type de carte</label><label className="input"><select value={crit.type} onChange={setC('type')}>
+              <option value="">Tous</option><option value="CLASSIQUE">Classique</option><option value="CLUB">Club</option><option value="FLOTTE">Flotte</option></select></label></div>
+            <div><label className="field-label">Dépenses calculées sur (jours)</label><label className="input"><input type="number" min="1" value={crit.spentDays} onChange={setC('spentDays')} /></label></div>
+            <div><label className="field-label">A dépensé au moins (F)</label><label className="input"><input type="number" min="0" value={crit.minSpent} onChange={setC('minSpent')} placeholder="—" /></label></div>
+            <div><label className="field-label">A dépensé au plus (F)</label><label className="input"><input type="number" min="0" value={crit.maxSpent} onChange={setC('maxSpent')} placeholder="—" /></label></div>
+            <div><label className="field-label">Solde inférieur à (F)</label><label className="input"><input type="number" min="0" value={crit.balanceBelow} onChange={setC('balanceBelow')} placeholder="—" /></label></div>
+            <div><label className="field-label">Sans achat depuis (jours)</label><label className="input"><input type="number" min="1" value={crit.inactiveDays} onChange={setC('inactiveDays')} placeholder="—" /></label></div>
+          </div>
+          <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 10 }}>
+            {anyCriteria && <Button size="sm" onClick={() => setCrit(NO_CRITERIA)}>Effacer les critères</Button>}
+            <Button icon={Search} disabled={finding} onClick={() => find(crit)}>Trouver les cartes</Button>
+          </div>
+        </div>
+      )}
+      {mode === 'Liste de numéros' && (
+        <div style={{ marginTop: 12 }}>
+          <textarea className="textarea" rows={3} value={numbers} onChange={(e) => setNumbers(e.target.value)}
+            placeholder={'Collez des numéros (complets ou 5 derniers chiffres), un par ligne ou séparés par des virgules\n6011 2847 0093\n44102'} />
+          <div className="row" style={{ justifyContent: 'flex-end', marginTop: 8 }}>
+            <Button icon={Search} disabled={finding || !numbers.trim()} onClick={() => find({ numbers })}>Retrouver ces cartes</Button>
+          </div>
+        </div>
+      )}
+      <FoundCards items={found} have={have} busy={finding} onAdd={add} />
+
+      <div className="row between" style={{ marginTop: 20, gap: 8, flexWrap: 'wrap' }}>
+        <div className="strong">Cartes à recharger <Badge tone={rows.length ? 'blue' : 'gray'}>{rows.length}</Badge></div>
+        {rows.length > 0 && <Button size="sm" icon={X} onClick={clearAll}>Vider la liste</Button>}
+      </div>
+      {rows.length === 0 ? (
+        <div className="muted" style={{ marginTop: 8, border: '1.5px dashed var(--border)', borderRadius: 10, padding: '18px 14px', textAlign: 'center', fontSize: 13 }}>
+          Aucune carte pour l'instant : recherchez une carte, choisissez une flotte, filtrez par critères ou collez une liste de numéros, puis « Ajouter ».
+        </div>
+      ) : (
         <>
-          <div className="row" style={{ gap: 8, marginTop: 14, flexWrap: 'wrap', background: 'var(--surface-2)', borderRadius: 10, padding: '10px 12px' }}>
-            <span className="strong">Montant pour les cartes cochées :</span>
+          <div className="row" style={{ gap: 8, marginTop: 10, flexWrap: 'wrap', background: 'var(--surface-2)', borderRadius: 10, padding: '10px 12px' }}>
+            <span className="strong">Montant pour toutes :</span>
             <label className="input" style={{ width: 210 }}><select value={bulk.mode} onChange={(e) => setBulk({ ...bulk, mode: e.target.value })}>
-              <option value="FIXE">Même montant (F)</option><option value="POURCENT">% des dépenses de la période</option><option value="CIBLE">Compléter jusqu'à (F)</option></select></label>
+              <option value="FIXE">Même montant (F)</option><option value="POURCENT">% des dépenses récentes</option><option value="CIBLE">Compléter le solde jusqu'à (F)</option></select></label>
             <label className="input" style={{ width: 140 }}><input type="number" min="1" value={bulk.value} onChange={(e) => setBulk({ ...bulk, value: e.target.value })} /></label>
             <Button size="sm" onClick={apply}>Appliquer</Button>
-            <Button size="sm" onClick={() => setAmounts(Object.fromEntries(rows.map((c) => [c.number, ''])))}>Effacer</Button>
+            <Button size="sm" onClick={() => setAmounts({})}>Effacer les montants</Button>
             <label className="input" style={{ width: 220, marginLeft: 'auto' }}><input placeholder="Libellé (facultatif)" value={label} onChange={(e) => setLabel(e.target.value)} /></label>
           </div>
-          {rows.length === 0 ? <Empty>Aucune carte ne correspond</Empty> : (
-            <div className="table-wrap" style={{ maxHeight: 420, overflow: 'auto', marginTop: 10 }}><table className="table">
-              <thead><tr>
-                <th style={{ width: 36 }}><Checkbox checked={allPicked} onChange={(v) => setPicked(Object.fromEntries(rows.map((c) => [c.number, v])))} /></th>
-                <th>Carte</th><th>Titulaire</th><th>Flotte</th><th className="r">Solde</th><th className="r">Dépensé {f.spentDays} j</th><th>Dernière recharge</th><th className="r">Montant (F)</th>
-              </tr></thead>
-              <tbody>{rows.map((c) => (
-                <tr key={c.number} style={{ opacity: picked[c.number] ? 1 : 0.5 }}>
-                  <td><Checkbox checked={!!picked[c.number]} onChange={(v) => setPicked({ ...picked, [c.number]: v })} /></td>
-                  <td className="num strong">{c.numberFormatted}</td>
-                  <td>{c.holderName}{c.vehiclePlate ? <span className="muted"> · {c.vehiclePlate}</span> : ''}</td>
-                  <td>{c.groupName || '—'}</td>
-                  <td className="r num">{fcfa(c.balance)}</td>
-                  <td className="r num">{fcfa(c.spent)}</td>
-                  <td className="muted num">{c.lastRechargeAt ? `${dateTime(c.lastRechargeAt)} · ${fcfa(c.lastRechargeAmount)} F` : '—'}</td>
-                  <td className="r" style={{ width: 140 }}>
-                    <label className="input" style={{ height: 32 }}><input type="number" min="0" step="1000" value={amounts[c.number] ?? ''}
-                      onChange={(e) => setAmounts({ ...amounts, [c.number]: e.target.value })} /></label>
-                  </td>
-                </tr>
-              ))}</tbody>
-            </table></div>
-          )}
+          <div className="table-wrap" style={{ maxHeight: 420, overflow: 'auto', marginTop: 10 }}><table className="table">
+            <thead><tr>
+              <th>Carte</th><th>Titulaire</th><th>Flotte</th><th className="r">Solde</th><th className="r">Dépenses récentes</th><th>Dernière recharge</th><th className="r">Montant (F)</th><th style={{ width: 36 }} />
+            </tr></thead>
+            <tbody>{rows.map((c) => (
+              <tr key={c.number}>
+                <td className="num strong">{c.numberFormatted}</td>
+                <td>{c.holderName || '—'}{c.vehiclePlate ? <span className="muted"> · {c.vehiclePlate}</span> : ''}</td>
+                <td>{c.groupName || '—'}</td>
+                <td className="r num">{fcfa(c.balance)}</td>
+                <td className="r num">{fcfa(c.spent)}<span className="muted"> / {c.spentDays || SPENT_DAYS} j</span></td>
+                <td className="muted num">{c.lastRechargeAt ? `${dateTime(c.lastRechargeAt)} · ${fcfa(c.lastRechargeAmount)} F` : '—'}</td>
+                <td className="r" style={{ width: 140 }}>
+                  <label className="input" style={{ height: 32 }}><input type="number" min="0" step="1000" value={amounts[c.number] ?? ''} placeholder="0"
+                    onChange={(e) => setAmounts({ ...amounts, [c.number]: e.target.value })} /></label>
+                </td>
+                <td><button type="button" className="link-more" title="Retirer de la liste" onClick={() => remove(c.number)}><X size={15} /></button></td>
+              </tr>
+            ))}</tbody>
+          </table></div>
           <div className="row between" style={{ marginTop: 12, flexWrap: 'wrap', rowGap: 8 }}>
-            <span className="strong">{lines.length} carte(s) · {money(total)}</span>
+            <span>
+              <span className="strong">{lines.length} carte(s) · {money(total)}</span>
+              {missing > 0 && <span className="muted"> · {missing} sans montant (ignorée{missing > 1 ? 's' : ''})</span>}
+            </span>
             <span className="row" style={{ gap: 8 }}>
               <Button size="sm" icon={Download} onClick={() => exportFile('csv')}>Exporter CSV</Button>
               <Button size="sm" icon={Download} onClick={() => exportFile('xlsx')}>Exporter Excel</Button>

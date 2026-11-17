@@ -51,11 +51,14 @@ public class RechargeSelectionController {
                                                @RequestParam(required = false) Integer inactiveDays,
                                                @RequestParam(required = false) Integer limit) {
         int days = spentDays == null || spentDays < 1 ? 30 : Math.min(spentDays, 365);
-        List<String> nums = numbers == null ? List.of() : Arrays.stream(numbers.split("[\\s,;]+"))
+        // un numéro écrit par groupes (« 6011 2847 0093 ») reste un seul numéro
+        String joined = numbers == null ? "" : numbers.replaceAll("(\\d{4})[ .-](\\d{4})[ .-](\\d{4})", "$1$2$3");
+        List<String> nums = Arrays.stream(joined.split("[\\s,;]+"))
                 .map(n -> n.replaceAll("[^0-9]", "")).filter(n -> !n.isEmpty()).toList();
-        // 5 derniers chiffres ou numéro complet, comme la recherche de carte partagée
+        // numéro complet, 4 ou 5 derniers chiffres, ou fragment (6 à 11 chiffres), comme la recherche de carte partagée
         List<String> full = nums.stream().filter(n -> n.length() == 12).toList();
-        List<String> last5 = nums.stream().filter(n -> n.length() >= 4 && n.length() < 12).toList();
+        List<String> last5 = nums.stream().filter(n -> n.length() == 4 || n.length() == 5).toList();
+        List<String> frag = nums.stream().filter(n -> n.length() > 5 && n.length() < 12).toList();
         List<Map<String, Object>> rows = db.list("""
                 \sSELECT c.id, c.number, c.type_code, ct.label AS type_label, c.balance, h.id AS holder_id, h.name AS holder_name,
                        h.kind AS holder_kind, g.name AS group_name, c.vehicle_plate, c.driver_name,
@@ -72,9 +75,10 @@ public class RechargeSelectionController {
                   AND (CAST(:t AS text) IS NULL OR c.type_code = :t)
                   AND (CAST(:q AS text) IS NULL OR h.name ILIKE '%' || :q || '%' OR c.vehicle_plate ILIKE '%' || :q || '%'
                        OR c.driver_name ILIKE '%' || :q || '%')
-                  AND (cardinality(CAST(:full AS text[])) + cardinality(CAST(:l5 AS text[])) = 0
+                  AND (cardinality(CAST(:full AS text[])) + cardinality(CAST(:l5 AS text[])) + cardinality(CAST(:fr AS text[])) = 0
                        OR c.number = ANY(CAST(:full AS text[])) OR right(c.number, 5) = ANY(CAST(:l5 AS text[]))
-                       OR right(c.number, 4) = ANY(CAST(:l5 AS text[])))
+                       OR right(c.number, 4) = ANY(CAST(:l5 AS text[]))
+                       OR EXISTS (SELECT 1 FROM unnest(CAST(:fr AS text[])) f WHERE strpos(c.number, f) > 0))
                   AND (CAST(:mins AS bigint) IS NULL OR COALESCE(sp.spent, 0) >= :mins)
                   AND (CAST(:maxs AS bigint) IS NULL OR COALESCE(sp.spent, 0) <= :maxs)
                   AND (CAST(:bb AS bigint) IS NULL OR c.balance < :bb)
@@ -84,7 +88,7 @@ public class RechargeSelectionController {
                 ORDER BY h.name NULLS LAST, g.name NULLS FIRST, c.number LIMIT :lim""",
                 Db.p("d", days, "g", groupId, "h", holderId, "t", type == null || type.isBlank() ? null : type,
                         "q", q == null || q.isBlank() ? null : q.trim(), "full", db.array("text", full.toArray()),
-                        "l5", db.array("text", last5.toArray()), "mins", minSpent, "maxs", maxSpent, "bb", balanceBelow,
+                        "l5", db.array("text", last5.toArray()), "fr", db.array("text", frag.toArray()), "mins", minSpent, "maxs", maxSpent, "bb", balanceBelow,
                         "ba", balanceAbove, "ina", inactiveDays, "lim", limit == null ? 500 : Math.min(Math.max(limit, 1), 2000)));
         rows.forEach(r -> r.put("numberFormatted", CardService.format((String) r.get("number"))));
         return rows;
